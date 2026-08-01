@@ -201,6 +201,24 @@ tfoot .foot.total td { background: #fff0e8; }
 .strategy-import summary { cursor: pointer; padding: 6px 0; }
 .strategy-import textarea { width: 100%; min-height: 90px; margin: 8px 0; padding: 10px; border: 1.5px solid var(--line); border-radius: 12px; font-family: monospace; font-size: 12px; resize: vertical; background: #fffdfb; }
 
+/* 分批建仓计划 */
+.dca-panel { margin-top: 16px; border: 1px solid var(--line); border-radius: 18px; padding: 16px; background: linear-gradient(135deg, #fff6ef, #fef3ec); }
+.dca-head h3 { margin: 0 0 10px; font-size: 15px; }
+.dca-ctrl { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.dca-ctrl label { margin: 0; display: flex; align-items: center; gap: 6px; }
+.dca-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
+.dca-card { border: 1px solid var(--line); border-left: 5px solid var(--primary2); border-radius: 16px; padding: 13px 15px; background: #fffaf6; box-shadow: 0 4px 14px rgba(255,150,120,.06); }
+.dca-card.done { opacity: .58; border-left-color: var(--down); filter: saturate(.7); }
+.dca-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.dca-no { font-weight: 800; font-size: 14px; }
+.dca-date { font-size: 12px; color: var(--muted); }
+.dca-tag { margin-left: auto; font-size: 11.5px; font-weight: 700; color: var(--down); background: #eafaf2; border: 1px solid #cdeede; border-radius: 999px; padding: 3px 10px; }
+.dca-mark { margin-left: auto; }
+.dca-fund { display: flex; justify-content: space-between; font-size: 12.5px; padding: 3px 0; border-bottom: 1px dashed var(--line); }
+.dca-fund:last-child { border-bottom: none; }
+.dca-fund span { color: var(--muted); }
+.dca-sum { margin-top: 8px; font-size: 13px; font-weight: 700; }
+
 @media (max-width: 720px) {
   .summary-grid { grid-template-columns: repeat(3, 1fr); }
   .cash-grid { grid-template-columns: repeat(2, 1fr); }
