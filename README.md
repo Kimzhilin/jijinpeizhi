@@ -69,7 +69,7 @@
    git push -u origin main
    ```
 3. 仓库 → **Settings → Pages → Build and deployment → Source** 选 `Deploy from a branch`，Branch 选 `main`，目录 `/ (root)`，保存。
-4. 约 1–2 分钟后访问 `https://<你的用户名>.github.io/fund-allocator/` 即可。
+4. 约 1–2 分钟后访问 `https://kimzhilin.github.io/jijinpeizhi/` 即可（本仓库已部署于此地址）。
 
 **方式二：网页直接上传**
 把本目录全部文件（含 `.github/`、`strategy.js`、`sw.js`、`.nojekyll`）上传到仓库根目录并提交，再按方式一步骤 3 开 Pages。
