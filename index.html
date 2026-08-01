@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>偏股基金平衡配置 · 调仓助手</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="mascot-svg" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M15 21 L11 6 L27 14 Z" fill="#ffd56b" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/>
+        <path d="M49 21 L53 6 L37 14 Z" fill="#ffd56b" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/>
+        <path d="M17 17 L14 9 L24 14 Z" fill="#ffb0b0"/>
+        <path d="M47 17 L50 9 L40 14 Z" fill="#ffb0b0"/>
+        <circle cx="32" cy="35" r="23" fill="#ffd56b" stroke="#fff" stroke-width="2.5"/>
+        <ellipse cx="24" cy="34" rx="3.9" ry="4.7" fill="#4a4458"/>
+        <ellipse cx="40" cy="34" rx="3.9" ry="4.7" fill="#4a4458"/>
+        <circle cx="25.4" cy="32.3" r="1.6" fill="#fff"/>
+        <circle cx="41.4" cy="32.3" r="1.6" fill="#fff"/>
+        <circle cx="18" cy="41" r="3.5" fill="#ff9e9e" opacity=".7"/>
+        <circle cx="46" cy="41" r="3.5" fill="#ff9e9e" opacity=".7"/>
+        <path d="M29 40 Q32 43 35 40" fill="none" stroke="#4a4458" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="50" cy="51" r="9" fill="#ffe9a8" stroke="#e3a93c" stroke-width="2"/>
+        <text x="50" y="55" font-size="11" text-anchor="middle" fill="#e3a93c" font-weight="800">¥</text>
+        <text x="8" y="31" font-size="10" fill="#ffcf8a">✦</text>
+        <text x="58" y="20" font-size="8" fill="#ffb89c">✦</text>
+      </svg>
+      <div>
+        <h1>偏股基金平衡配置 · 调仓助手</h1>
+        <p class="sub">场外 A 类 · 稳健偏防御 · 慢慢来，不焦虑 🌿</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span id="refreshStatus" class="refresh-status">未刷新</span>
+      <button id="refreshBtn" class="btn btn-primary">🔄 刷新行情</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <a href="#sec-config">① 配置</a>
+    <a href="#sec-holdings">② 持仓 / 行情</a>
+    <a href="#sec-advice">③ 调仓建议</a>
+    <a href="#sec-log">④ 交易记录</a>
+  </nav>
+
+  <!-- 理财猫对话条 -->
+  <div class="mascot-bar">
+    <svg class="mascot-svg" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M15 21 L11 6 L27 14 Z" fill="#ffd56b" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M49 21 L53 6 L37 14 Z" fill="#ffd56b" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M17 17 L14 9 L24 14 Z" fill="#ffb0b0"/>
+      <path d="M47 17 L50 9 L40 14 Z" fill="#ffb0b0"/>
+      <circle cx="32" cy="35" r="25" fill="#ffd56b" stroke="#fff" stroke-width="2.5"/>
+      <ellipse cx="24" cy="34" rx="4.2" ry="5" fill="#4a4458"/>
+      <ellipse cx="40" cy="34" rx="4.2" ry="5" fill="#4a4458"/>
+      <circle cx="25.6" cy="32.1" r="1.7" fill="#fff"/>
+      <circle cx="41.6" cy="32.1" r="1.7" fill="#fff"/>
+      <circle cx="18" cy="42" r="3.8" fill="#ff9e9e" opacity=".7"/>
+      <circle cx="46" cy="42" r="3.8" fill="#ff9e9e" opacity=".7"/>
+      <path d="M28 41 Q32 45 36 41" fill="none" stroke="#4a4458" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="51" cy="52" r="9" fill="#ffe9a8" stroke="#e3a93c" stroke-width="2"/>
+      <text x="51" y="56" font-size="11" text-anchor="middle" fill="#e3a93c" font-weight="800">¥</text>
+      <text x="7" y="30" font-size="10" fill="#ffcf8a">✦</text>
+      <text x="59" y="19" font-size="8" fill="#ffb89c">✦</text>
+    </svg>
+    <div class="mascot-talk" id="mascotMsg">嗨，我是理财猫～把金额填上，咱们慢慢建仓 🐱</div>
+  </div>
+
+  <!-- 策略面板（理财财每日自动维护） -->
+  <section id="sec-strategy" class="card strategy">
+    <h2>🔄 策略面板（理财财每日自动更新）</h2>
+    <p class="hint">比例 / 现金 / 阈值 / 基金列表由<b>「理财财市场自适应引擎」每日收盘后拉取真实行情自动计算</b>。你<b>无需再找我聊</b>——打开页面即是最新版。仅在想改进功能或调整底层投资逻辑时，才需要回来找我。</p>
+    <div class="posture-row">
+      <label>我的风险偏好（底仓姿态）：</label>
+      <select id="postureSel">
+        <option value="conservative">稳健（少波动）</option>
+        <option value="balanced">平衡（推荐）</option>
+        <option value="aggressive">进取（多弹性）</option>
+      </select>
+      <span class="hint-inline">引擎在评估结果之上叠加此偏好，不影响自动调仓节奏。</span>
+    </div>
+    <div id="strategyMeta" class="strategy-meta"></div>
+    <div class="strategy-actions">
+      <button id="applyDefaultBtn" class="btn">↩ 恢复默认（引擎基线 + 平衡偏好）</button>
+    </div>
+    <details class="strategy-import">
+      <summary>手动粘贴策略 JSON 以临时覆盖（覆盖自动版，直到点上方恢复默认）</summary>
+      <textarea id="strategyInput" placeholder='粘贴理财财提供的策略 JSON，例如 {"version":"2026-08-01-v3","cashWeight":0.25,"funds":[...]}'></textarea>
+      <button id="importStrategyBtn" class="btn btn-primary">套用此策略</button>
+    </details>
+  </section>
+
+  <!-- 组合总览 -->
+  <section class="summary" id="summary">
+    <div class="summary-grid">
+      <div class="stat"><span class="label">总投入</span><span class="value" id="s-total">—</span></div>
+      <div class="stat"><span class="label">权益市值</span><span class="value" id="s-equity">—</span></div>
+      <div class="stat"><span class="label">现金</span><span class="value" id="s-cash">—</span></div>
+      <div class="stat"><span class="label">总资产</span><span class="value" id="s-asset">—</span></div>
+      <div class="stat"><span class="label">总收益</span><span class="value" id="s-pnl">—</span></div>
+      <div class="stat"><span class="label">收益率</span><span class="value" id="s-pnl-pct">—</span></div>
+    </div>
+  </section>
+
+  <!-- ① 配置 -->
+  <section id="sec-config" class="card">
+    <h2>① 设定可投金额</h2>
+    <div class="row">
+      <label>可投金额（元）</label>
+      <div class="inline">
+        <input type="number" id="amountInput" placeholder="例如 1000000" />
+        <button id="genConfigBtn" class="btn btn-primary">设定初投金额</button>
+      </div>
+      <p class="hint strong">⚠️ 请输入 <b>100% 的总可投金额</b>（你准备投入这个计划的全部本金）。<b>不要自己先扣 20%</b>——工具会自动从中预留 20% 作现金机动，剩下 80% 部署到 5 只基金。例：打算投 100 万，就填 1000000。</p>
+    </div>
+    <div class="row">
+      <label>后续追加投资（元）</label>
+      <div class="inline">
+        <input type="number" id="addAmountInput" placeholder="例如 500000" />
+        <button id="addInvestBtn" class="btn">追加</button>
+      </div>
+      <p class="hint">后期想再加钱时点这里：填<b>新增</b>的金额（不是累计）。新钱进入现金池，目标配置同步上调，你再按建议逐步部署。已登记的持仓与盈亏全程保留。</p>
+    </div>
+    <p class="hint">比例 / 现金 / 阈值 / 基金列表由<b>理财财结合当下行情动态维护</b>（见顶部「策略面板」），页面加载即套用最新版。如需微调可在策略面板粘贴 JSON 或由理财财更新。</p>
+    <div id="targetTableWrap" class="table-wrap"></div>
+  </section>
+
+  <!-- ② 持仓 / 行情 -->
+  <section id="sec-holdings" class="card">
+    <h2>② 持仓与实时行情</h2>
+    <p class="hint">你按建议买入后，在下方「记录交易」里登记（基金 / 买入或卖出 / 金额 / 净值，净值默认带入最新官方净值，可改）。登记后这里显示市值与盈亏，每次打开页面或点「刷新行情」会按最新净值重算。</p>
+    <div class="table-wrap">
+      <table id="holdingsTable">
+        <thead>
+          <tr>
+            <th>基金</th><th>代码</th><th>持仓金额</th><th>最新净值</th>
+            <th>当日涨跌</th><th>市值</th><th>盈亏</th><th>盈亏%</th>
+          </tr>
+        </thead>
+        <tbody id="holdingsBody"></tbody>
+        <tfoot id="holdingsFoot"></tfoot>
+      </table>
+    </div>
+
+    <div class="cash-panel" id="cashPanel"></div>
+
+    <div class="trade-box">
+      <h3>记录交易</h3>
+      <div class="trade-grid">
+        <select id="tradeFund"></select>
+        <select id="tradeType">
+          <option value="buy">买入（用现金）</option>
+          <option value="sell">卖出（回笼现金）</option>
+        </select>
+        <input type="number" id="tradeAmount" placeholder="金额(元)" />
+        <input type="number" id="tradeNav" placeholder="净值(留空用估算)" step="0.0001" />
+        <input type="date" id="tradeDate" />
+        <button id="tradeSubmit" class="btn btn-primary">登记</button>
+      </div>
+      <p class="hint" id="tradeHint">提示：先点「刷新行情」拉取最新净值，登记买入时净值会自动带入；卖出同理。<b>导入已有持仓</b>：直接选「买入」，基金选对应的（创业板 110026 / 南方中证A500 022434），日期填实际买入日，金额填当时投入本金，净值填你<b>实际买入时的净值 / App 里的「持仓成本价」</b>（用成本价盈亏会与平台一致）。登记后现金会自动 = 总投入 − 已投成本，无需手调。</p>
+    </div>
+  </section>
+
+  <!-- ③ 调仓建议 -->
+  <section id="sec-advice" class="card">
+    <h2>③ 调仓建议（按我们的纪律自动生成）</h2>
+    <p class="hint">规则：季度再平衡（任一只偏离目标达阈值调回，阈值见顶部「策略面板」）；成长分批止盈（档位见策略面板）；宽基 / 红利 / 成长按近 3 月高点回撤分档加仓；现金目标随市场在 10%–30% 浮动（实时值见顶部「策略面板」），不做死板固定；单日波动 ≤3% 不操作。</p>
+    <div id="adviceList" class="advice-list"></div>
+  </section>
+
+  <!-- ④ 交易记录 -->
+  <section id="sec-log" class="card">
+    <h2>④ 交易记录</h2>
+    <div class="table-wrap">
+      <table id="logTable">
+        <thead><tr><th>日期</th><th>基金</th><th>方向</th><th>金额</th><th>净值</th></tr></thead>
+        <tbody id="logBody"></tbody>
+      </table>
+    </div>
+    <button id="resetBtn" class="btn btn-danger">清空全部数据</button>
+  </section>
+
+  <footer class="footer">
+    <p>数据来源：东方财富公开接口（联接基金净值每日收盘后更新一次，工具以最新官方净值计算盈亏与当日涨跌；无可靠免费盘中估算接口，故不提供分时跳动）。本工具为个人记账 / 辅助决策用，<b>不构成投资建议</b>，不承诺收益。实盘操作前请完成平台风险测评。</p>
+  </footer>
+
+  <script src="strategy.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

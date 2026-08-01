@@ -1,0 +1,36 @@
+name: 理财财策略自动更新
+
+on:
+  schedule:
+    # 每个交易日 16:30（北京时间 = UTC 08:30）收盘后运行
+    - cron: '30 8 * * 1-5'
+  workflow_dispatch: {}   # 允许手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 运行市场自适应引擎
+        run: node generate-strategy.js
+
+      - name: 有变化才提交
+        run: |
+          git config user.name "理财财引擎"
+          git config user.email "bot@workbuddy.local"
+          if git diff --quiet strategy.js; then
+            echo "策略无变化，跳过提交"
+          else
+            git add strategy.js
+            git commit -m "auto: 更新策略 $(date +%F)"
+            git push
+          fi

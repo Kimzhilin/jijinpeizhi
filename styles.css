@@ -1,0 +1,209 @@
+:root {
+  --bg1: #fff4ea;          /* 奶油桃 */
+  --bg2: #e9faf2;          /* 薄荷 */
+  --card: #fffdfb;
+  --ink: #5b5566;
+  --muted: #a79fb4;
+  --line: #f1e6df;         /* 暖色描边 */
+  --primary: #ff9e7a;      /* 暖珊瑚 */
+  --primary2: #ffb89c;
+  --primary-ink: #ffffff;
+  --up: #ff7a8c;           /* 涨（红，柔和） */
+  --down: #3fae87;         /* 跌（绿，柔和） */
+  --amber: #f3b25e;
+  --shadow-soft: 0 10px 28px rgba(255,150,120,.10), 0 2px 8px rgba(120,90,80,.04);
+  --radius: 22px;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--ink);
+  line-height: 1.6;
+  background:
+    radial-gradient(1200px 600px at 12% -8%, #ffe7d6 0%, rgba(255,231,214,0) 55%),
+    radial-gradient(1000px 560px at 100% 0%, #d8f6ea 0%, rgba(216,246,234,0) 50%),
+    linear-gradient(135deg, var(--bg1) 0%, var(--bg2) 100%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+/* 漂浮的柔和光斑 */
+body::before, body::after {
+  content: ""; position: fixed; border-radius: 50%; filter: blur(40px);
+  z-index: 0; opacity: .5; pointer-events: none;
+}
+body::before { width: 320px; height: 320px; left: -80px; top: 30%; background: #ffd9c2; }
+body::after  { width: 280px; height: 280px; right: -60px; bottom: 8%; background: #c4f0de; }
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 22px;
+  background: rgba(255,253,251,.78); backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.mascot-svg { width: 46px; height: 46px; animation: bob 3.2s ease-in-out infinite; }
+@keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+.brand h1 { font-size: 17px; margin: 0; font-weight: 800; letter-spacing: .3px; }
+.brand .sub { margin: 0; font-size: 12.5px; color: var(--muted); }
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
+.refresh-status { font-size: 12px; color: var(--muted); }
+
+/* 吉祥物对话条 */
+.mascot-bar {
+  position: relative; z-index: 1;
+  margin: 14px 20px 0; display: flex; align-items: center; gap: 14px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+  padding: 12px 16px; box-shadow: var(--shadow-soft);
+}
+.mascot-bar .mascot-svg { width: 40px; height: 40px; flex: none; }
+.mascot-talk { font-size: 13.5px; color: var(--ink); }
+.mascot-talk b { color: var(--primary); }
+
+.tabs {
+  position: sticky; top: 61px; z-index: 19;
+  display: flex; gap: 6px; padding: 10px 20px; flex-wrap: wrap;
+  background: rgba(255,253,251,.78); backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.tabs a {
+  text-decoration: none; color: var(--muted); font-size: 14px; font-weight: 600;
+  padding: 7px 14px; border-radius: 999px; transition: .2s;
+}
+.tabs a:hover { background: #fff0e8; color: var(--ink); }
+.tabs a:active { transform: scale(.96); }
+
+.summary { position: relative; z-index: 1; padding: 16px 20px; }
+.summary-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+.stat {
+  position: relative; z-index: 1;
+  background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+  padding: 14px; box-shadow: var(--shadow-soft);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.stat::after {
+  content: ""; position: absolute; left: 14px; top: 14px; width: 26px; height: 4px;
+  border-radius: 999px; background: linear-gradient(90deg, var(--primary), var(--primary2)); opacity: .8;
+}
+.stat .label { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.stat .value { font-size: 18px; font-weight: 800; }
+
+.card {
+  position: relative; z-index: 1;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 20px; margin: 0 20px 16px; box-shadow: var(--shadow-soft);
+  animation: rise .4s ease both;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.card h2 { margin: 0 0 12px; font-size: 16.5px; font-weight: 800; }
+.card h3 { margin: 16px 0 8px; font-size: 14.5px; font-weight: 700; }
+.hint { font-size: 12.5px; color: var(--muted); margin: 6px 0 12px; }
+.hint.strong {
+  background: #fff3ec; border: 1px solid #ffd9c6; border-radius: 14px;
+  padding: 10px 12px; color: #c2613e; font-size: 12.5px;
+}
+.hint.strong b { color: #d9532f; }
+
+.row { margin-bottom: 10px; }
+label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; font-weight: 600; }
+.inline { display: flex; gap: 8px; flex-wrap: wrap; }
+input, select {
+  padding: 10px 12px; border: 1.5px solid var(--line); border-radius: 14px;
+  font-size: 14px; background: #fffdfb; color: var(--ink); min-width: 0;
+  transition: .2s;
+}
+input:focus, select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(255,158,122,.18); }
+input[type="number"] { flex: 1; min-width: 160px; }
+#tradeFund, #tradeType { min-width: 150px; }
+
+.btn {
+  border: none; border-radius: 14px; padding: 10px 18px; font-size: 14px;
+  cursor: pointer; font-weight: 700; transition: .18s; background: #f3ece6; color: var(--ink);
+}
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0) scale(.98); }
+.btn-primary {
+  background: linear-gradient(135deg, var(--primary2), var(--primary)); color: var(--primary-ink);
+  box-shadow: 0 6px 16px rgba(255,140,108,.35);
+}
+.btn-primary:hover { filter: brightness(1.04); }
+.btn-danger { background: #fff; color: var(--up); border: 1.5px solid #ffd0d6; margin-top: 12px; }
+.btn-danger:hover { background: #fff1f3; }
+
+.table-wrap { overflow-x: auto; margin-top: 8px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: right; padding: 10px 11px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+thead th { color: var(--muted); font-weight: 700; background: #fbf4ef; }
+tbody tr:hover { background: #fff6f1; }
+
+.up { color: var(--up); font-weight: 700; }      /* 涨红 */
+.down { color: var(--down); font-weight: 700; }  /* 跌绿 */
+.flat { color: var(--muted); }
+
+.trade-box { border-top: 1px dashed var(--line); margin-top: 16px; padding-top: 14px; }
+.trade-grid { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.advice-list { display: flex; flex-direction: column; gap: 12px; }
+.advice {
+  border: 1px solid var(--line); border-left-width: 5px; border-radius: 16px;
+  padding: 13px 15px; background: #fffaf6; box-shadow: 0 4px 14px rgba(255,150,120,.06);
+}
+.advice.buy { border-left-color: var(--down); }
+.advice.sell { border-left-color: var(--up); }
+.advice.info { border-left-color: var(--amber); }
+.advice .a-head { font-weight: 800; font-size: 14px; margin-bottom: 4px; }
+.advice .a-body { font-size: 13px; color: var(--ink); }
+.advice .a-reason { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
+.advice .tag {
+  display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: 999px; margin-right: 6px; font-weight: 700;
+}
+.tag.buy { background: #dcf5ec; color: var(--down); }
+.tag.sell { background: #ffe1e6; color: var(--up); }
+.tag.info { background: #fdeecd; color: var(--amber); }
+.a-done {
+  margin-left: auto; border: 1.5px solid #cfeede; background: #eafaf2; color: #2f9b78;
+  border-radius: 999px; padding: 3px 12px; font-size: 11.5px; font-weight: 700; cursor: pointer;
+  transition: .18s;
+}
+.a-done:hover { background: #d6f3e6; }
+.a-done:active { transform: scale(.96); }
+
+.footer { padding: 24px 20px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.7; }
+
+/* 持仓表合计行 */
+tfoot .foot td { font-weight: 800; background: #fbf4ef; border-top: 2px solid var(--line); }
+tfoot .foot.cash td { background: #eafaf2; color: #2f9b78; }
+tfoot .foot.total td { background: #fff0e8; }
+
+/* 现金机动状态面板 */
+.cash-panel { margin-top: 14px; border: 1px solid #cdeede; border-radius: 18px; padding: 16px; background: linear-gradient(135deg, #f0fbf5, #eafaf2); }
+.cash-panel h3 { margin: 0 0 10px; font-size: 14.5px; display: flex; align-items: center; gap: 6px; }
+.cash-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.cash-stat { background: #fffdfb; border: 1px solid var(--line); border-radius: 14px; padding: 11px 13px; display: flex; flex-direction: column; gap: 4px; }
+.cash-stat span { font-size: 12px; color: var(--muted); }
+.cash-stat b { font-size: 16px; }
+.cash-bar { height: 10px; border-radius: 999px; background: #e3efe9; overflow: hidden; margin-top: 4px; }
+.cash-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #6fd3ab, #3fae87); transition: width .5s ease; }
+
+/* 策略面板 */
+.strategy .strategy-meta { border: 1px solid var(--line); border-radius: 16px; padding: 14px; background: #fbf4ef; margin-bottom: 12px; }
+.strat-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+.strat-ver { font-weight: 800; font-size: 14px; color: var(--primary); }
+.strat-date { font-size: 12px; color: var(--muted); }
+.strat-src { font-size: 12px; color: var(--muted); margin-left: auto; }
+.strat-market { font-size: 12.5px; color: var(--ink); line-height: 1.7; margin-bottom: 8px; background: #fffdfb; border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; }
+.strat-weights { font-size: 13px; font-weight: 700; color: var(--ink); }
+.strategy-actions { margin-bottom: 10px; }
+.strategy-import { font-size: 13px; color: var(--muted); }
+.strategy-import summary { cursor: pointer; padding: 6px 0; }
+.strategy-import textarea { width: 100%; min-height: 90px; margin: 8px 0; padding: 10px; border: 1.5px solid var(--line); border-radius: 12px; font-family: monospace; font-size: 12px; resize: vertical; background: #fffdfb; }
+
+@media (max-width: 720px) {
+  .summary-grid { grid-template-columns: repeat(3, 1fr); }
+  .cash-grid { grid-template-columns: repeat(2, 1fr); }
+  .topbar { flex-direction: column; gap: 8px; align-items: flex-start; }
+  .tabs { top: 0; }
+}
