@@ -5,7 +5,8 @@
 
 // ---------- 配置：内置默认（fallback）。实际参数优先由 strategy.js（理财财维护）覆盖 ----------
 let CONFIG = { // 内置兜底默认（与 strategy.js v2 对齐；页面加载后会被 strategy.js 覆盖）
-  cashWeight: 0.25,            // 现金机动比例
+  cashWeight: 0.25,            // 现金机动比例（基线目标，引擎每日动态调整）
+  cashCap: 0.30,               // 现金软顶：占比超此值自动生成「回补到目标」买入建议，防牛市现金无限堆积
   driftThreshold: 0.06,        // 偏离目标 ±6% 触发再平衡
   growthTakeProfit: [0.20, 0.35], // 成长 +20% / +35% 分批止盈
   wideDrawdown:  [0.08, 0.15, 0.25], // 宽基/红利 回撤分档加仓
@@ -390,8 +391,8 @@ function buildAdvice() {
     const currentWeight = s.value / asset;
     const diff = currentWeight - targetWeight;
 
-    // 1) 偏离再平衡
-    if (diff > CONFIG.driftThreshold) {
+    // 1) 偏离再平衡（现金已超软顶时暂停减持，优先把现金部署回市场）
+    if (diff > CONFIG.driftThreshold && cashRatio <= CONFIG.cashCap) {
       const sellAmt = diff * asset;
       list.push({
         type: 'sell', title: `再平衡：减持 ${f.name}`,
@@ -451,10 +452,32 @@ function buildAdvice() {
     }
   });
 
+  // 4.5) 现金软顶回补：占比超 cashCap 时，按目标权重把多余现金买回基金，防牛市现金无限堆积
+  if (cashRatio > CONFIG.cashCap) {
+    const excess = t.cash - (state.amount || 0) * CONFIG.cashWeight; // 回补到目标现金
+    const fc = state.filled.cap = state.filled.cap || {};
+    if (excess > 1) {
+      CONFIG.funds.forEach(f => {
+        if (fc[f.code]) return; // 已执行 → 跳过
+        const buyAmt = excess * f.weight;
+        if (buyAmt > 1) {
+          list.push({
+            type: 'buy', key: `cap-${f.code}-0`,
+            title: `现金回补：加仓 ${f.name}`,
+            body: `现金占比 ${(cashRatio*100).toFixed(1)}% 已超软顶 ${(CONFIG.cashCap*100).toFixed(0)}%，建议按目标权重加仓约 <b>¥${fmt(buyAmt)}</b>，把现金拉回目标 ${(CONFIG.cashWeight*100).toFixed(0)}%。`,
+            reason: '现金软顶回补（防止牛市现金无限堆积）',
+          });
+        }
+      });
+    }
+  } else {
+    state.filled.cap = {}; // 现金回到软顶内，复位回补标记
+  }
+
   // 4) 现金纪律（目标随市场浮动，以 cashWeight ±5pp 为区间）
   if (cashRatio < CONFIG.cashWeight - 0.05) {
     list.unshift({ type: 'info', title: '现金低于目标', body: `现金占比 ${(cashRatio*100).toFixed(1)}%，低于目标 ${(CONFIG.cashWeight*100).toFixed(0)}% 约 5 个百分点，按纪律暂停所有加仓，优先保留弹药，等待再平衡或止盈释放现金。`, reason: '现金纪律（目标随市场浮动）' });
-  } else if (cashRatio > CONFIG.cashWeight + 0.05) {
+  } else if (cashRatio > CONFIG.cashWeight + 0.05 && cashRatio <= CONFIG.cashCap) {
     list.unshift({ type: 'info', title: '现金高于目标', body: `当前现金占比 ${(cashRatio*100).toFixed(1)}%，高于目标 ${(CONFIG.cashWeight*100).toFixed(0)}% 约 5 个百分点，偏高，建议择机建仓以防踏空（优先补齐偏离目标的基金）。`, reason: '现金纪律（目标随市场浮动）' });
   }
 
