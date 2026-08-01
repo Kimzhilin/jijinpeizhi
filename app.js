@@ -87,6 +87,7 @@ function defaultState() {
     filled: { dd: {}, tp: {} }, // 已执行的分档记忆：dd[code]=[bool×3], tp[code]=[bool×2]
     lastNavUpdate: 0,        // 最近一次成功拉取净值的时间戳（毫秒）
     dataMode: 'live',        // live=联网最新 / cache=离线缓存
+    dca: { batches: 3, intervalDays: 14, startDate: null, executed: [] }, // 分批建仓计划：分几批 / 每批间隔 / 首批日期 / 已执行批次
   };
 }
 
@@ -282,6 +283,66 @@ function renderTargets() {
   html += `<tr style="font-weight:700"><td>现金机动</td><td>—</td><td>${(CONFIG.cashWeight*100).toFixed(0)}%</td><td>¥${fmt(state.amount*CONFIG.cashWeight)}</td><td>待命</td></tr>`;
   html += '</tbody></table>';
   wrap.innerHTML = html;
+}
+
+// ---------- 渲染：分批建仓计划 ----------
+function renderDCA() {
+  const wrap = $('dcaPanel');
+  if (!wrap) return;
+  if (state.amount <= 0) { wrap.innerHTML = ''; return; }
+  const dca = state.dca;
+  if (!dca || !dca.startDate) {
+    wrap.innerHTML = `
+      <div class="dca-empty">
+        <h3>📅 分批建仓计划</h3>
+        <p class="hint">设定可投金额后，这里会自动生成「分 3 批买入、每批间隔 14 天、现金全程保留等回撤」的建仓计划。当前沪深300估值处历史约 87% 分位，不算便宜，分批更稳、更防贵位挨套。</p>
+      </div>`;
+    return;
+  }
+  const deployed = state.amount * (1 - CONFIG.cashWeight);
+  const perBatchEquity = deployed / dca.batches;
+  const cashKeep = state.amount * CONFIG.cashWeight;
+  let cards = '';
+  for (let i = 0; i < dca.batches; i++) {
+    const d = new Date(dca.startDate);
+    d.setDate(d.getDate() + i * dca.intervalDays);
+    const dateStr = d.toISOString().slice(0, 10);
+    const done = dca.executed.indexOf(i) >= 0;
+    const rows = CONFIG.funds.map(f => {
+      const amt = (deployed * f.weight) / dca.batches;
+      return `<div class="dca-fund"><span>${f.name}</span><b>¥${fmt(amt)}</b></div>`;
+    }).join('');
+    cards += `
+      <div class="dca-card ${done ? 'done' : ''}">
+        <div class="dca-card-head">
+          <span class="dca-no">第 ${i + 1} 批</span>
+          <span class="dca-date">建议 ${dateStr}</span>
+          ${done ? '<span class="dca-tag">✓ 已建仓</span>' : `<button class="a-done dca-mark" data-batch="${i}">✓ 标记已建仓</button>`}
+        </div>
+        <div class="dca-funds">${rows}</div>
+        <div class="dca-sum">本批权益合计 <b>¥${fmt(perBatchEquity)}</b></div>
+      </div>`;
+  }
+  wrap.innerHTML = `
+    <div class="dca-head">
+      <h3>📅 分批建仓计划</h3>
+      <div class="dca-ctrl">
+        <label>分 <select id="dcaBatches">
+          <option value="2"${dca.batches === 2 ? ' selected' : ''}>2 批</option>
+          <option value="3"${dca.batches === 3 ? ' selected' : ''}>3 批</option>
+          <option value="4"${dca.batches === 4 ? ' selected' : ''}>4 批</option>
+        </select></label>
+        <label>每批间隔 <select id="dcaInterval">
+          <option value="7"${dca.intervalDays === 7 ? ' selected' : ''}>7 天</option>
+          <option value="14"${dca.intervalDays === 14 ? ' selected' : ''}>14 天</option>
+          <option value="21"${dca.intervalDays === 21 ? ' selected' : ''}>21 天</option>
+          <option value="30"${dca.intervalDays === 30 ? ' selected' : ''}>30 天</option>
+        </select></label>
+        <button id="dcaRegenBtn" class="btn">↺ 重新生成</button>
+      </div>
+      <p class="hint">权益总额 <b>¥${fmt(deployed)}</b> 分 ${dca.batches} 批（每批约 ¥${fmt(perBatchEquity)}）；<b>现金 ¥${fmt(cashKeep)}（${Math.round(CONFIG.cashWeight * 100)}%）全程保留</b>，等回撤低吸（见③调仓建议）。第 1 批现在可买，后续到点再买；若市场先大跌，直接用现金低吸。每批点「标记已建仓」后变灰。</p>
+    </div>
+    <div class="dca-cards">${cards}</div>`;
 }
 
 // ---------- 渲染：持仓 / 行情 ----------
@@ -623,6 +684,7 @@ function renderAll() {
   renderStrategyPanel();
   renderSummary();
   renderTargets();
+  renderDCA();
   renderHoldings();
   renderHoldingsFoot();
   renderCashPanel();
@@ -643,6 +705,13 @@ function init() {
       if (!confirm(`当前已设定初投金额 ¥${fmt(state.amount)}，确定改为 ¥${fmt(amt)}？\n（已登记的持仓与盈亏不受影响，仅调整目标与现金基准）`)) return;
     }
     state.amount = amt;
+    // 初始化分批建仓计划：设定金额即出计划；金额变更保留已执行标记
+    if (!state.dca) {
+      state.dca = { batches: 3, intervalDays: 14, startDate: new Date().toISOString().slice(0, 10), executed: [] };
+    } else if (!state.dca.startDate) {
+      state.dca.startDate = new Date().toISOString().slice(0, 10);
+      state.dca.executed = [];
+    }
     // 现金为派生值（总投入 − 已投成本基准），无需手动设定；建仓后自然趋近 20% 目标
     saveState();
     renderAll();
@@ -718,6 +787,28 @@ function init() {
       state.riskPosture = postureSel.value;
       saveState();
       applyPosture();
+    });
+  }
+
+  // 分批建仓计划交互（事件委托到容器，innerHTML 重建后仍有效）
+  const dcaWrap = $('dcaPanel');
+  if (dcaWrap) {
+    dcaWrap.addEventListener('click', (e) => {
+      if (e.target.closest('#dcaRegenBtn')) {
+        state.dca.startDate = new Date().toISOString().slice(0, 10);
+        state.dca.executed = [];
+        saveState(); renderAll(); return;
+      }
+      const mk = e.target.closest('.dca-mark');
+      if (mk) {
+        const i = +mk.dataset.batch;
+        if (state.dca.executed.indexOf(i) < 0) state.dca.executed.push(i);
+        saveState(); renderAll(); return;
+      }
+    });
+    dcaWrap.addEventListener('change', (e) => {
+      if (e.target.id === 'dcaBatches') { state.dca.batches = +e.target.value; saveState(); renderAll(); }
+      else if (e.target.id === 'dcaInterval') { state.dca.intervalDays = +e.target.value; saveState(); renderAll(); }
     });
   }
 
