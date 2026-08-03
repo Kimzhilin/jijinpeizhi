@@ -1,8 +1,8 @@
 // 本文件由「理财财市场自适应引擎」每日自动生成，请勿手动编辑。
-// 最后更新：2026-08-03T14:13:10.917Z
+// 最后更新：2026-08-03T20:19:19.703Z
 window.STRATEGY = {
   "version": "auto-2026-08-03",
-  "updatedAt": "2026-08-03T14:13:10.917Z",
+  "updatedAt": "2026-08-03T20:19:19.703Z",
   "posture": "balanced",
   "source": "理财财市场自适应引擎（每日自动）",
   "cashWeight": 0.2,
@@ -28,31 +28,31 @@ window.STRATEGY = {
     {
       "code": "110020",
       "name": "易方达沪深300ETF联接A",
-      "weight": 0.1941,
+      "weight": 0.1959,
       "cat": "broad"
     },
     {
       "code": "022434",
       "name": "南方中证A500ETF联接A",
-      "weight": 0.1758,
+      "weight": 0.1776,
       "cat": "broad"
     },
     {
       "code": "007466",
       "name": "华泰柏瑞中证红利低波ETF联接A",
-      "weight": 0.2849,
+      "weight": 0.2909,
       "cat": "value"
     },
     {
       "code": "011612",
       "name": "华夏科创50ETF联接A",
-      "weight": 0.1334,
+      "weight": 0.1286,
       "cat": "growth"
     },
     {
       "code": "110026",
       "name": "易方达创业板ETF联接A",
-      "weight": 0.1243,
+      "weight": 0.1195,
       "cat": "growth"
     },
     {
@@ -64,8 +64,8 @@ window.STRATEGY = {
   ],
   "indicators": {
     "volAll": 0.221,
-    "ddAll": -0.139,
-    "growthVsValue": -0.084,
+    "ddAll": -0.147,
+    "growthVsValue": -0.098,
     "perFund": [
       {
         "code": "110020",
@@ -94,10 +94,10 @@ window.STRATEGY = {
       {
         "code": "011612",
         "name": "华夏科创50ETF联接A",
-        "vol": 0.293,
-        "dd": -0.246,
-        "mom60": -0.02,
-        "valPct": 0.53
+        "vol": 0.294,
+        "dd": -0.282,
+        "mom60": -0.046,
+        "valPct": 0.46
       },
       {
         "code": "110026",
@@ -119,8 +119,8 @@ window.STRATEGY = {
   },
   "notes": [
     "全市场年化波动 22.1% → 现金目标 20%",
-    "成长/价值60日相对强度 -8.4% → 略偏价值",
-    "组合120日回撤 -13.9% → 常态",
+    "成长/价值60日相对强度 -9.8% → 略偏价值",
+    "组合120日回撤 -14.7% → 常态",
     "已纳入黄金(000217)避险资产，固定占权益池约 8.75%（总盘约 7%），仅做偏离再平衡"
   ]
 };
