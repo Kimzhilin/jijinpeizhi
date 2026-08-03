@@ -20,6 +20,7 @@ let CONFIG = { // 内置兜底默认（与 strategy.js v2 对齐；页面加载�
     { code: '007466', name: '华泰柏瑞中证红利低波ETF联接A',  weight: 0.25, cat: 'value' },
     { code: '011612', name: '华夏科创50ETF联接A',           weight: 0.12, cat: 'growth' },
     { code: '110026', name: '易方达创业板ETF联接A',         weight: 0.10, cat: 'growth' },
+    { code: '000217', name: '华安黄金ETF联接C',            weight: 0.08, cat: 'gold' },
   ],
 };
 
@@ -277,7 +278,7 @@ function renderTargets() {
   let html = '<table><thead><tr><th>基金</th><th>代码</th><th>目标比例</th><th>目标金额</th><th>类型</th></tr></thead><tbody>';
   CONFIG.funds.forEach(f => {
     const amt = deployed * f.weight;
-    const cat = f.cat === 'broad' ? '宽基' : f.cat === 'value' ? '红利低波' : '成长';
+    const cat = f.cat === 'broad' ? '宽基' : f.cat === 'value' ? '红利低波' : f.cat === 'growth' ? '成长' : '黄金';
     html += `<tr><td>${f.name}</td><td>${f.code}</td><td>${(f.weight*100).toFixed(0)}%</td><td>¥${fmt(amt)}</td><td>${cat}</td></tr>`;
   });
   html += `<tr style="font-weight:700"><td>现金机动</td><td>—</td><td>${(CONFIG.cashWeight*100).toFixed(0)}%</td><td>¥${fmt(state.amount*CONFIG.cashWeight)}</td><td>待命</td></tr>`;
@@ -490,7 +491,7 @@ function buildAdvice() {
 
     // 3) 回撤分档加仓（需近3月高点；已执行则消失；价格回升突破该档自动重置）
     const high = state.navCache[f.code] && state.navCache[f.code].high;
-    if (high && s.nav) {
+    if (high && s.nav && f.cat !== 'gold') {  // 黄金为避险资产，不做回撤分档加仓，仅靠偏离再平衡
       const dd = (s.nav - high) / high; // 负值=回撤
       const steps = f.cat === 'growth' ? CONFIG.growthDrawdown : CONFIG.wideDrawdown;
       const fd = state.filled.dd[f.code] = state.filled.dd[f.code] || steps.map(() => false);
