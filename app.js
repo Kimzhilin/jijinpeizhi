@@ -753,6 +753,63 @@ function buildAdvice() {
     }
   });
 
+  // 5) 亏损持仓评估：结合真实建仓成本，对「仍亏损」的基金给出是否割肉的理性裁决。
+  //    核心原则：指数基金长期向上 + 中国个人投基金免资本利得税 → 绝大多数情况「持有不割肉」；
+  //    亏着的基金往往已是组合低配项，再平衡/低吸逻辑本就会把它买回；仅深亏+信号偏空时给「回本减仓计划」。
+  const perFundMap = {};
+  (CONFIG.indicators && CONFIG.indicators.perFund || []).forEach(p => perFundMap[p.code] = p);
+  const lossCards = [];
+  CONFIG.funds.forEach(f => {
+    const s = fundStats(f.code);
+    if (s.cost <= 0 || s.pnl >= 0) return;            // 无成本或已盈利 → 不评估
+    const ind = perFundMap[f.code] || {};
+    const valPct = ind.valPct != null ? ind.valPct : 0.5;
+    const mom = ind.mom60 != null ? ind.mom60 : 0;
+    const lossPct = -s.pnlPct;                          // 亏损深度（正数）
+    const recoverPct = s.value > 0 ? (-s.pnl) / s.value : 0; // 回本还需涨幅
+    const etf = state.etfCache[f.code];
+    const recovering = (etf && etf.chgPct != null && etf.chgPct > 0) || mom > -0.03; // 近期有反弹迹象
+    const signalBearish = valPct > 0.70 && mom < 0;    // 估值偏贵且动能为负 → 信号偏空
+
+    let ruling, detail;
+    if (f.cat === 'growth') {
+      if (lossPct > 0.25 || signalBearish) {
+        ruling = '持有不割 · 设回本减仓计划';
+        detail = `成长类波动大、深套后不宜底部清仓。建议<b>继续持有</b>，不现在割肉；待反弹至成本线附近（约需再涨 <b>+${(recoverPct*100).toFixed(0)}%</b> 回本）时，减持 1/3~1/2 换入更稳的红利低波或黄金，降低单一成长暴露。`;
+      } else if (lossPct > 0.10) {
+        ruling = '持有 · 可低位摊薄';
+        detail = `亏损 ${(lossPct*100).toFixed(1)}%，成长回撤后常回归。建议<b>持有</b>；若现金充裕且未触现金纪律下限，可在低位小幅补仓摊薄成本，缩短回本时间。`;
+      } else {
+        ruling = '持有即可';
+        detail = `浅亏 ${(lossPct*100).toFixed(1)}%，成长波动大、回撤后多能回归，<b>无需割肉</b>。`;
+      }
+    } else {
+      // broad / value / gold：低波长期向上，几乎一律持有不割
+      if (lossPct > 0.25) {
+        ruling = '持有 · 深套不割';
+        detail = `亏损 ${(lossPct*100).toFixed(1)}% 已深度套牢，但此类资产长期回归概率高，<b>持有不割</b>；现金充裕时可分档补仓拉低成本。`;
+      } else if (lossPct > 0.10) {
+        ruling = '持有 · 可低位摊薄';
+        detail = `亏损 ${(lossPct*100).toFixed(1)}%，宽基/红利/黄金长期向上，<b>持有不割</b>；现金允许可在低位小幅补仓。`;
+      } else {
+        ruling = '持有即可';
+        detail = `浅亏 ${(lossPct*100).toFixed(1)}%，<b>无需割肉</b>，长期持有待回本。`;
+      }
+    }
+    const recoverTxt = `距回本还差约 <b>+${(recoverPct*100).toFixed(1)}%</b>`;
+    const recoverNote = recovering
+      ? `近月已现反弹迹象，${recoverTxt}，切忌在回本前割肉把反弹红利丢掉；回本后按③纪律再平衡。`
+      : `当前仍偏弱，${recoverTxt}，继续持有等待。`;
+
+    lossCards.push({
+      type: 'loss',
+      title: `亏损评估：${f.name}`,
+      body: `当前<span class="down">亏损 ¥${fmt(Math.abs(s.pnl))}（${fmtPct(s.pnlPct)}）</span>。裁决：<b>${ruling}</b>。${detail} ${recoverNote}`,
+      reason: `结合真实建仓成本（投入 ¥${fmt(s.cost)}、现市值 ¥${fmt(s.value)}）；指数基金长期向上+个人免资本利得税 → 底部割肉=浮亏变实亏且丢低位筹码`,
+    });
+  });
+  if (lossCards.length) [...lossCards].reverse().forEach(c => list.unshift(c));
+
   // 4.5) 现金软顶回补：占比超 cashCap 时，按目标权重把多余现金买回基金，防牛市现金无限堆积
   if (cashRatio > CONFIG.cashCap) {
     const excess = t.cash - (state.amount || 0) * CONFIG.cashWeight; // 回补到目标现金
@@ -824,7 +881,7 @@ function renderAdvice() {
     </div>`;
   wrap.innerHTML = banner + list.map(a => `
     <div class="advice ${a.type}">
-      <div class="a-head"><span class="tag ${a.type}">${a.type === 'buy' ? '买入' : a.type === 'sell' ? '卖出' : '提示'}</span>${a.title}
+      <div class="a-head"><span class="tag ${a.type}">${a.type === 'buy' ? '买入' : a.type === 'sell' ? '卖出' : a.type === 'loss' ? '亏损评估' : '提示'}</span>${a.title}
         ${a.key ? `<button class="a-done" data-key="${a.key}">✓ 我已执行</button>` : ''}
       </div>
       <div class="a-body">${a.body}</div>
