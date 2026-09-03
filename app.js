@@ -286,7 +286,48 @@ function renderTargets() {
   wrap.innerHTML = html;
 }
 
-// ---------- 渲染：分批建仓计划 + 记录实际持仓 ----------
+// ---------- 智能建仓引擎：按"市场便宜度"决定现在该建多少 ----------
+function computeDeployPlan() {
+  const t = totals();
+  const targetEquity = (state.amount || 0) * (1 - CONFIG.cashWeight);   // 目标权益仓位
+  const pending = Math.max(0, targetEquity - t.equity);                  // 还没建的部分
+  const ind = (CONFIG.indicators && CONFIG.indicators.perFund) ? CONFIG.indicators.perFund : [];
+  const byCode = {}; ind.forEach(p => { byCode[p.code] = p; });
+
+  // 按目标权重加权：估值分位 + 近3月回撤（指标缺失时按中性处理）
+  let valPct = 0, dd = 0, wSum = 0, missing = false;
+  CONFIG.funds.forEach(f => {
+    const w = f.weight; wSum += w;
+    const p = byCode[f.code];
+    if (!p) { missing = true; return; }
+    valPct += (p.valPct != null ? p.valPct : 0.5) * w;
+    dd += (p.dd != null ? p.dd : 0) * w;
+  });
+  if (wSum > 0) { valPct /= wSum; dd /= wSum; }
+
+  const scoreVal = (1 - valPct) * 100;                        // 估值越低分越高
+  const scoreDd = Math.min(100, Math.max(0, -dd * 400));      // 回撤越大分越高（-25% → 100）
+  const cheap = 0.6 * scoreVal + 0.4 * scoreDd;               // 便宜度 0-100
+
+  const batches = (state.dca && state.dca.batches) ? state.dca.batches : 3;
+  const baseRatio = 1 / batches;                              // 常规节奏：分 N 批
+  let mult, label;
+  if (cheap >= 70)      { mult = 1.5; label = '明显便宜 · 加快部署'; }
+  else if (cheap >= 50) { mult = 1.0; label = '中性偏便宜 · 常规节奏'; }
+  else if (cheap >= 30) { mult = 0.7; label = '中性偏贵 · 放慢节奏'; }
+  else                  { mult = 0.5; label = '偏贵 · 小步试探'; }
+  const ratio = Math.max(0.10, Math.min(0.60, baseRatio * mult));
+
+  // 可动用现金：需保留现金纪律下限（cashWeight − 5pp）
+  const cashFloor = (t.asset || 0) * Math.max(0, CONFIG.cashWeight - 0.05);
+  const cashAvail = Math.max(0, t.cash - cashFloor);
+  const amount = Math.min(pending * ratio, cashAvail);
+
+  const alloc = CONFIG.funds.map(f => ({ f, amt: amount * f.weight }));
+  return { targetEquity, pending, cheap, valPct, dd, ratio, mult, label, amount, alloc, cashAvail, equity: t.equity, missing };
+}
+
+// ---------- 渲染：智能建仓建议 + 记录实际持仓 ----------
 function renderDCA() {
   const wrap = $('dcaPanel');
   if (!wrap) return;
@@ -294,56 +335,54 @@ function renderDCA() {
   const dca = state.dca;
   const fundOpts = CONFIG.funds.map(f => `<option value="${f.code}">${f.name} (${f.code})</option>`).join('');
 
-  // —— 分批建仓计划（仅当已设定金额且有计划日期时展示，作为路线图） ——
+  // —— 智能建仓建议（按市场便宜度动态给出"现在建多少"） ——
   let planHtml;
-  if (state.amount > 0 && dca.startDate) {
-    const deployed = state.amount * (1 - CONFIG.cashWeight);
-    const perBatchEquity = deployed / dca.batches;
+  if (state.amount > 0) {
+    const dp = computeDeployPlan();
+    const pctDone = dp.targetEquity > 0 ? Math.min(100, (dp.equity / dp.targetEquity) * 100) : 0;
+    const tempCls = dp.cheap >= 70 ? 't-cold' : dp.cheap >= 50 ? 't-mild' : dp.cheap >= 30 ? 't-warm' : 't-hot';
+    const allocRows = dp.alloc.map(a => `
+      <div class="dca-fund"><span>${a.f.name}</span><b>¥${fmt(a.amt)}</b></div>`).join('');
     const cashKeep = state.amount * CONFIG.cashWeight;
-    let cards = '';
-    for (let i = 0; i < dca.batches; i++) {
-      const d = new Date(dca.startDate);
-      d.setDate(d.getDate() + i * dca.intervalDays);
-      const dateStr = d.toISOString().slice(0, 10);
-      const rows = CONFIG.funds.map(f => {
-        const amt = (deployed * f.weight) / dca.batches;
-        return `<div class="dca-fund"><span>${f.name}</span><b>¥${fmt(amt)}</b></div>`;
-      }).join('');
-      cards += `
-        <div class="dca-card">
-          <div class="dca-card-head">
-            <span class="dca-no">第 ${i + 1} 批</span>
-            <span class="dca-date">建议 ${dateStr}</span>
+    const bodyHtml = dp.amount > 1 ? `
+        <div class="dca-now">
+          <div class="dca-now-head">现在建议建仓 <b>¥${fmt(dp.amount)}</b>
+            <span class="dca-now-sub">剩余待部署的 ${Math.round(dp.ratio * 100)}%（常规每批 ${Math.round(100 / dca.batches)}%，本次 ×${dp.mult}）</span>
           </div>
-          <div class="dca-funds">${rows}</div>
-          <div class="dca-sum">本批权益合计 <b>¥${fmt(perBatchEquity)}</b> · 实际买入后请在下方登记</div>
-        </div>`;
-    }
+          <div class="dca-funds">${allocRows}</div>
+        </div>
+        <p class="hint">买入后到下方「📝 记录实际持仓」登记，待部署金额会自动扣减，下次建议随之调整。下次节奏：约 ${dca.intervalDays} 天后，或组合再跌约 5% 可提前加一档。</p>`
+      : `<p class="hint strong">${dp.pending <= 1 ? '已建满：权益已达目标仓位，无需再建仓，后续交给「③ 调仓建议」维护即可。' : '暂不建议建仓：可动用现金已到纪律下限（需保留约 ' + Math.round((CONFIG.cashWeight - 0.05) * 100) + '% 现金），或剩余待部署过小。'}</p>`;
     planHtml = `
       <div class="dca-head">
-        <h3>📅 分批建仓计划（路线图参考）</h3>
+        <h3>📊 智能建仓建议</h3>
         <div class="dca-ctrl">
-          <label>分 <select id="dcaBatches">
+          <label>常规节奏 <select id="dcaBatches">
             <option value="2"${dca.batches === 2 ? ' selected' : ''}>2 批</option>
             <option value="3"${dca.batches === 3 ? ' selected' : ''}>3 批</option>
             <option value="4"${dca.batches === 4 ? ' selected' : ''}>4 批</option>
           </select></label>
-          <label>每批间隔 <select id="dcaInterval">
+          <label>参考间隔 <select id="dcaInterval">
             <option value="7"${dca.intervalDays === 7 ? ' selected' : ''}>7 天</option>
             <option value="14"${dca.intervalDays === 14 ? ' selected' : ''}>14 天</option>
             <option value="21"${dca.intervalDays === 21 ? ' selected' : ''}>21 天</option>
             <option value="30"${dca.intervalDays === 30 ? ' selected' : ''}>30 天</option>
           </select></label>
-          <button id="dcaRegenBtn" class="btn">↺ 重新生成</button>
         </div>
-        <p class="hint">权益总额 <b>¥${fmt(deployed)}</b> 分 ${dca.batches} 批（每批约 ¥${fmt(perBatchEquity)}）；<b>现金 ¥${fmt(cashKeep)}（${Math.round(CONFIG.cashWeight * 100)}%）全程保留</b>，等回撤低吸。第 1 批现在可买，后续到点再买。<b>买入后请到下方「记录实际持仓」登记</b>，工具据此反推成本基准，之后按最新净值每天自动更新市值与收益。</p>
-      </div>
-      <div class="dca-cards">${cards}</div>`;
+        <p class="hint">目标权益 <b>¥${fmt(dp.targetEquity)}</b>（可投金额的 ${Math.round((1 - CONFIG.cashWeight) * 100)}%）· 已部署 <b>¥${fmt(dp.equity)}</b> · 剩余待部署 <b>¥${fmt(dp.pending)}</b>；现金目标 ¥${fmt(cashKeep)}（${Math.round(CONFIG.cashWeight * 100)}%）全程保留。</p>
+        <div class="dca-progress"><div class="dca-progress-fill" style="width:${pctDone.toFixed(1)}%"></div></div>
+        <div class="dca-temp ${tempCls}">
+          <span class="dca-temp-label">市场便宜度</span>
+          <span class="dca-temp-val"><b>${Math.round(dp.cheap)}</b> / 100 · ${dp.label}</span>
+        </div>
+        <p class="hint">组合估值分位 <b>${(dp.valPct * 100).toFixed(0)}%</b> · 近3月回撤 <b>${(dp.dd * 100).toFixed(1)}%</b>（按目标权重加权，取自每日自动更新的策略指标）。${dp.missing ? ' <b>注：部分基金缺指标，已按中性处理。</b>' : ''}</p>
+        ${bodyHtml}
+      </div>`;
   } else {
     planHtml = `
       <div class="dca-empty">
-        <h3>📅 分批建仓计划</h3>
-        <p class="hint">在「① 配置」设定可投金额后，这里会自动生成分批建仓路线图（分 3 批、每批间隔 14 天、现金全程保留等回撤）。无论是否用计划，都能直接在下方「记录实际持仓」登记你已买的基金。</p>
+        <h3>📊 智能建仓建议</h3>
+        <p class="hint">在「① 配置」设定可投金额后，这里会按<b>市场便宜度</b>动态给出「现在该建多少、各基金分多少」——估值越低、回撤越大，建得越快。无论是否用建议，都能直接在下方「记录实际持仓」登记你已买的基金。</p>
       </div>`;
   }
 
