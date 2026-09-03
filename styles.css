@@ -144,6 +144,12 @@ tbody tr:hover { background: #fff6f1; }
 .flat { color: var(--muted); }
 
 .trade-box { border-top: 1px dashed var(--line); margin-top: 16px; padding-top: 14px; }
+.trade-box summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--muted); padding: 4px 0; list-style: none; }
+.trade-box summary::-webkit-details-marker { display: none; }
+.trade-box summary::before { content: "▸ "; color: var(--primary); }
+.trade-box[open] summary::before { content: "▾ "; }
+.trade-box summary:hover { color: var(--ink); }
+.trade-box[open] summary { color: var(--ink); margin-bottom: 12px; }
 .trade-grid { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
 .advice-list { display: flex; flex-direction: column; gap: 12px; }

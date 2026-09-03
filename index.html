@@ -147,8 +147,8 @@
 
     <div class="cash-panel" id="cashPanel"></div>
 
-    <div class="trade-box">
-      <h3>记录交易</h3>
+    <details class="trade-box">
+      <summary>记录交易（逐笔流水 · 高级用法，日常请用「① 配置」的 📝 记录实际持仓）</summary>
       <div class="trade-grid">
         <select id="tradeFund"></select>
         <select id="tradeType">
@@ -160,8 +160,8 @@
         <input type="date" id="tradeDate" />
         <button id="tradeSubmit" class="btn btn-primary">登记</button>
       </div>
-      <p class="hint" id="tradeHint">提示：先点「刷新行情」拉取最新净值，登记买入时净值会自动带入；卖出同理。<b>导入已有持仓</b>：直接选「买入」，基金选对应的（创业板 110026 / 南方中证A500 022434），日期填实际买入日，金额填当时投入本金，净值填你<b>实际买入时的净值 / App 里的「持仓成本价」</b>（用成本价盈亏会与平台一致）。登记后现金会自动 = 总投入 − 已投成本，无需手调。</p>
-    </div>
+      <p class="hint" id="tradeHint">这里留给两种场景：<b>① 刚发生的买卖</b>，想当场记一笔（先点「刷新行情」，净值会自动带入）；<b>② 想保留逐笔流水</b>，好在「④ 交易记录」回看每笔的日期、净值、方向。<b>日常补录 / 滞后录入请优先用「① 配置」的 📝 记录实际持仓</b>——只要持有金额 + 持有收益两个数，更准也更快。<b>两者可以混用</b>：记录实际持仓会重设当前基准，记录交易在基准之上累加或扣减。</p>
+    </details>
   </section>
 
   <!-- ③ 调仓建议 -->
