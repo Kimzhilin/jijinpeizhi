@@ -15,12 +15,12 @@ let CONFIG = { // 内置兜底默认（与 strategy.js v2 对齐；页面加载�
   historyDays: 90,             // 近3月高点窗口
   refreshMs: 5 * 60 * 1000,    // 交易时段每5分钟自动刷新
   funds: [
-    { code: '110020', name: '易方达沪深300ETF联接A',        weight: 0.15, cat: 'broad' },
-    { code: '022434', name: '南方中证A500ETF联接A',       weight: 0.13, cat: 'broad' },
-    { code: '007466', name: '华泰柏瑞中证红利低波ETF联接A',  weight: 0.25, cat: 'value' },
-    { code: '011612', name: '华夏科创50ETF联接A',           weight: 0.12, cat: 'growth' },
-    { code: '110026', name: '易方达创业板ETF联接A',         weight: 0.10, cat: 'growth' },
-    { code: '000217', name: '华安黄金ETF联接C',            weight: 0.08, cat: 'gold' },
+    { code: '110020', name: '易方达沪深300ETF联接A',        weight: 0.15, cat: 'broad',  etf: { market: 1, code: '510300' } }, // 沪深300ETF(沪)
+    { code: '022434', name: '南方中证A500ETF联接A',       weight: 0.13, cat: 'broad',  etf: { market: 0, code: '159338' } }, // 中证A500ETF(深)
+    { code: '007466', name: '华泰柏瑞中证红利低波ETF联接A',  weight: 0.25, cat: 'value',  etf: { market: 1, code: '512890' } }, // 红利低波ETF(沪)
+    { code: '011612', name: '华夏科创50ETF联接A',           weight: 0.12, cat: 'growth', etf: { market: 1, code: '588000' } }, // 科创50ETF(沪)
+    { code: '110026', name: '易方达创业板ETF联接A',         weight: 0.10, cat: 'growth', etf: { market: 0, code: '159915' } }, // 创业板ETF(深)
+    { code: '000217', name: '华安黄金ETF联接C',            weight: 0.08, cat: 'gold',   etf: { market: 1, code: '518880' } }, // 黄金ETF(沪)
   ],
 };
 
@@ -83,6 +83,7 @@ function defaultState() {
     positions: {},          // code -> { shares, cost }
     tx: [],                 // { id, code, type, date, amount, nav }
     navCache: {},           // code -> { nav, prevNav, dailyChange, date, high, fetchedDate }
+    etfCache: {},           // code -> { chgPct, price, name, ts } 盘中预估：按对应场内ETF实时涨跌近似
     lastRefresh: 0,
     riskPosture: 'balanced', // 风险偏好：conservative / balanced / aggressive
     filled: { dd: {}, tp: {} }, // 已执行的分档记忆：dd[code]=[bool×3], tp[code]=[bool×2]
@@ -231,6 +232,62 @@ function fetchFundData(code) {
   });
 }
 
+// ---------- 盘中预估：用对应场内 ETF 实时涨跌，近似联接基金下一交易日净值变动 ----------
+// 场外联接基金T日15:00前下单按T日净值，而当日净值要收盘后才出；用同指数场内ETF的盘中实时涨跌，
+// 可在交易时段内近似"现在下单、收盘成交"时的方向与时点幅度，缩小未知价成交的落差。
+function isTradingNow() {
+  const now = new Date();
+  const wd = now.getDay();
+  if (wd === 0 || wd === 6) return false;
+  const h = now.getHours(), m = now.getMinutes();
+  const am = (h === 9 && m >= 30) || h === 10 || h === 11;
+  const pm = (h >= 13 && h < 15);
+  return am || pm;
+}
+
+// 极简 JSONP（东方财富 push2 行情接口支持 cb 回调）
+let _jpSeq = 0;
+function jsonp(url) {
+  return new Promise((resolve) => {
+    const cbName = '__jp' + (++_jpSeq) + Date.now();
+    const s = document.createElement('script');
+    s.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'cb=' + cbName + '&_=' + Date.now();
+    let done = false;
+    const finish = (val) => {
+      if (done) return; done = true;
+      try { delete window[cbName]; } catch (e) {}
+      if (s.parentNode) s.parentNode.removeChild(s);
+      resolve(val);
+    };
+    window[cbName] = (data) => finish(data);
+    s.onerror = () => finish(null);
+    setTimeout(() => finish(null), 7000); // 超时保护，避免卡死
+    document.head.appendChild(s);
+  });
+}
+
+async function fetchEtfEstimates() {
+  state.etfCache = state.etfCache || {};
+  const tasks = CONFIG.funds.filter(f => f.etf).map(async (f) => {
+    const secid = (f.etf.market || 1) + '.' + f.etf.code;
+    const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f57,f58,f170&fltt=2&invt=2&ut=fa5fd1943c7b386f172d6893dbfba21b`;
+    const d = await jsonp(url);
+    if (d && d.data) {
+      const chg = Number(d.data.f170);          // f170 = 涨跌幅(%)，fltt=2 下为数字，如 1.23 表示 +1.23%
+      const price = Number(d.data.f43);          // 最新价
+      if (!isNaN(chg)) {
+        state.etfCache[f.code] = {
+          chgPct: chg / 100,
+          price: isNaN(price) ? null : price,
+          name: d.data.f58 || '',
+          ts: Date.now(),
+        };
+      }
+    }
+  });
+  await Promise.all(tasks);
+}
+
 async function refreshMarket() {
   $('refreshStatus').textContent = '刷新中…';
   const today = new Date().toISOString().slice(0, 10);
@@ -242,12 +299,17 @@ async function refreshMarket() {
   }
   state.lastRefresh = Date.now();
   state.lastNavUpdate = Date.now();
+  // 盘中预估：拉取对应场内 ETF 实时涨跌（已熔断式容错，失败不影响主流程）
+  try { await fetchEtfEstimates(); } catch (e) {}
   saveState();
   const anyData = CONFIG.funds.some(f => state.navCache[f.code] && state.navCache[f.code].nav != null);
+  const anyEtf = CONFIG.funds.some(f => state.etfCache[f.code] && state.etfCache[f.code].chgPct != null);
   const online = navigator.onLine;
   if (anyData) {
     state.dataMode = 'live';
-    $('refreshStatus').textContent = '实时净值 · ' + new Date().toLocaleTimeString('zh-CN') + ' 联网刷新';
+    let txt = '实时净值 · ' + new Date().toLocaleTimeString('zh-CN') + ' 联网刷新';
+    if (anyEtf) txt += isTradingNow() ? ' ｜ 盘中预估已更新' : ' ｜ 今日收盘预估已更新';
+    $('refreshStatus').textContent = txt;
   } else {
     state.dataMode = 'cache';
     const last = state.lastNavUpdate ? '（最近 ' + new Date(state.lastNavUpdate).toLocaleDateString('zh-CN') + '）' : '';
@@ -493,6 +555,7 @@ function removeHolding(code) {
 function renderHoldings() {
   const body = $('holdingsBody');
   body.innerHTML = '';
+  let wSum = 0, wChg = 0; // 组合加权预估（按市值）
   CONFIG.funds.forEach(f => {
     const s = fundStats(f.code);
     const c = state.navCache[f.code];
@@ -500,6 +563,12 @@ function renderHoldings() {
     const dc = c && c.dailyChange != null ? c.dailyChange : null;
     const dcCls = dc == null ? 'flat' : dc > 0.0001 ? 'up' : dc < -0.0001 ? 'down' : 'flat';
     const dcTxt = dc == null ? '—' : fmtPct(dc);
+    // 今日预估：基于对应场内 ETF 实时涨跌
+    const etf = state.etfCache[f.code];
+    const ec = etf && etf.chgPct != null ? etf.chgPct : null;
+    const ecCls = ec == null ? 'flat' : ec > 0.0001 ? 'up' : ec < -0.0001 ? 'down' : 'flat';
+    const ecTxt = ec == null ? '—' : fmtPct(ec);
+    if (ec != null && s.value > 0) { wSum += s.value; wChg += s.value * ec; }
     const pnlCls = s.pnl > 0 ? 'up' : s.pnl < 0 ? 'down' : 'flat';
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -508,11 +577,42 @@ function renderHoldings() {
       <td>¥${fmt(s.cost)}</td>
       <td>${navTxt}</td>
       <td class="${dcCls}">${dcTxt}</td>
+      <td class="est ${ecCls}">${ecTxt}</td>
       <td>¥${fmt(s.value)}</td>
       <td class="${pnlCls}">${s.pnl >= 0 ? '+' : '-'}¥${fmt(Math.abs(s.pnl))}</td>
       <td class="${pnlCls}">${fmtPct(s.pnlPct)}</td>`;
     body.appendChild(tr);
   });
+  renderEtfEstimateBar(wSum > 0 ? wChg / wSum : null);
+}
+
+// 组合盘中预估横幅
+function renderEtfEstimateBar(portChg) {
+  const el = $('etfEstimateBar');
+  if (!el) return;
+  const codes = CONFIG.funds.filter(f => state.etfCache[f.code] && state.etfCache[f.code].chgPct != null);
+  if (codes.length === 0) {
+    el.innerHTML = '<span class="etf-empty">📡 今日预估：尚未拉取场内ETF行情，点「🔄 刷新行情」获取（交易时段内为实时，收盘后为今日实际涨跌）。</span>';
+    return;
+  }
+  const trading = isTradingNow();
+  const cls = portChg == null ? 'flat' : portChg > 0.0001 ? 'up' : portChg < -0.0001 ? 'down' : 'flat';
+  const t = totals();
+  const estDelta = (portChg != null ? t.equity * portChg : 0);
+  const perFund = codes.map(f => {
+    const e = state.etfCache[f.code];
+    const c = e.chgPct > 0.0001 ? 'up' : e.chgPct < -0.0001 ? 'down' : 'flat';
+    return `<span class="etf-chip ${c}">${f.name.replace('ETF联接A','').replace('ETF联接C','').replace('ETF联接','')} ${fmtPct(e.chgPct)}</span>`;
+  }).join('');
+  const ts = codes.map(f => state.etfCache[f.code].ts).sort((a, b) => b - a)[0];
+  const tsTxt = ts ? new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '';
+  el.innerHTML = `
+    <span class="etf-label">${trading ? '📡 盘中预估' : '📡 收盘预估'}（按对应场内ETF实时涨跌近似）</span>
+    <span class="etf-port ${cls}">组合约 ${fmtPct(portChg)}</span>
+    <span class="etf-delta ${cls}">${estDelta >= 0 ? '+' : '-'}¥${fmt(Math.abs(estDelta))}</span>
+    <span class="etf-chips">${perFund}</span>
+    <span class="etf-time">更新 ${tsTxt}</span>
+    <span class="etf-tip">估计你<b>${trading ? '现在下单' : '下一交易日开盘前下单'}</b>的成交净值较昨收约变动这么多（未知价成交，仅供参考）</span>`;
 }
 
 function fillTradeFundOptions() {
@@ -720,7 +820,7 @@ function renderAdvice() {
     <div class="advice info exec-note">
       <div class="a-head"><span class="tag info">执行提示</span>信号基于 <b>${baseTxt}</b> 收盘净值 · 按<b>下一交易日 15:00 前</b>的申赎、以<b>当日收盘净值</b>成交</div>
       <div class="a-body">场外基金是「未知价成交」：你现在看到的所有价格都是<b>已收盘的历史净值</b>，真正成交用的是你下单那天的收盘价（下单时不可知）。因此下方金额是<b>目标金额</b>，实际成交份额会随当日涨跌浮动——这正是「高波动时分批」的意义。</div>
-      <div class="a-reason">依据：开放式基金申赎规则（T 日 15:00 前按 T 日净值，之后按 T+1 日净值）</div>
+      <div class="a-reason">依据：开放式基金申赎规则（T 日 15:00 前按 T 日净值，之后按 T+1 日净值）。想在交易时段内缩小这个落差？看「② 持仓」顶部的「📡 盘中预估」——用对应场内 ETF 的实时涨跌近似你<b>现在下单</b>的成交方向与时点幅度，下单前瞄一眼就知道今天大致是涨是跌。</div>
     </div>`;
   wrap.innerHTML = banner + list.map(a => `
     <div class="advice ${a.type}">
@@ -754,18 +854,18 @@ function renderHoldingsFoot() {
     <tr class="foot">
       <td colspan="2">权益合计</td>
       <td>¥${fmt(t.costAll)}</td>
-      <td>—</td><td>—</td>
+      <td>—</td><td>—</td><td>—</td>
       <td>¥${fmt(t.equity)}</td>
       <td colspan="2">—</td>
     </tr>
     <tr class="foot cash">
       <td colspan="2">现金机动（待命）</td>
-      <td colspan="4">¥${fmt(t.cash)}　占总资产 ${cashPct.toFixed(1)}%（目标 ${(CONFIG.cashWeight*100).toFixed(0)}%）</td>
+      <td colspan="5">¥${fmt(t.cash)}　占总资产 ${cashPct.toFixed(1)}%（目标 ${(CONFIG.cashWeight*100).toFixed(0)}%）</td>
       <td colspan="2">—</td>
     </tr>
     <tr class="foot total">
       <td colspan="2">总资产</td>
-      <td colspan="4">¥${fmt(t.asset)}</td>
+      <td colspan="5">¥${fmt(t.asset)}</td>
       <td class="${pnlCls}" colspan="2">${t.pnl >= 0 ? '+' : '-'}¥${fmt(Math.abs(t.pnl))}</td>
     </tr>`;
 }
