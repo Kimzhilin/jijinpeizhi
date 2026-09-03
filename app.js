@@ -402,6 +402,7 @@ function recordHolding() {
   }
   const shares = amount / nav;          // 反推份额：录入日净值 × 份额 = 持有金额
   const cost = amount - profit;         // 反推成本基准：持有金额 − 累计收益 = 投入本金
+  const isRe = !!(state.positions[code] && state.positions[code].shares > 0); // 是否覆盖式重新登记
   state.positions[code] = Object.assign(state.positions[code] || {}, {
     shares, cost,
     recordedAt: new Date().toISOString().slice(0, 10),
@@ -409,6 +410,7 @@ function recordHolding() {
     recordedAmount: amount,
     recordedProfit: profit,
   });
+  if (isRe) resetFundMemory(code, false); // 成本基准变了 → 旧的"已执行"分档标记已失效（交易记录保留）
   saveState();
   $('holdAmount').value = '';
   $('holdProfit').value = '';
@@ -416,10 +418,34 @@ function recordHolding() {
   renderAll();
 }
 
+// 清除某只基金的执行记忆残留：止盈 / 低吸分档"已执行"标记，可选一并清交易记录
+function resetFundMemory(code, clearTx) {
+  if (state.filled && state.filled.dd) delete state.filled.dd[code];
+  if (state.filled && state.filled.tp) delete state.filled.tp[code];
+  if (clearTx && Array.isArray(state.tx)) state.tx = state.tx.filter(t => t.code !== code);
+}
+
 function removeHolding(code) {
-  const name = fundByCode(code) ? fundByCode(code).name : code;
-  if (!confirm('删除「' + name + '」的持仓记录？\n（仅删除本工具的记账登记，不影响你在平台里的实际持仓）')) return;
+  const f = fundByCode(code);
+  const name = f ? f.name : code;
+  const pos = state.positions[code];
+  const p = (pos && pos.recordedProfit) || 0;
+  const amtTxt = pos && pos.recordedAmount
+    ? ('\n当前登记：持有 ¥' + fmt(pos.recordedAmount) + '，累计' + (p >= 0 ? '盈 ¥' : '亏 −¥') + fmt(Math.abs(p)))
+    : '';
+  if (!confirm(
+    '确定撤销「' + name + '」的登记？' + amtTxt + '\n\n' +
+    '删除后该基金恢复为「从未登记」：\n' +
+    '· 持仓份额 / 成本 / 盈亏 清零\n' +
+    '· 现金自动回补（现金 = 总投入 − 已投成本）\n' +
+    '· 止盈 / 低吸分档记录清空，建议可重新触发\n' +
+    '· ④ 交易记录里该基金的条目一并清除\n' +
+    '· 目标比例与可投金额不受影响（来自策略面板，不随持仓变化）\n\n' +
+    '（仅清除本工具的记账登记，不影响你在平台里的实际持仓）'
+  )) return;
   delete state.positions[code];
+  resetFundMemory(code, true);
+  if (state.filled) state.filled.cap = {}; // 现金结构变了，复位现金回补标记
   saveState();
   renderAll();
 }
