@@ -12,6 +12,14 @@ let CONFIG = { // 内置兜底默认（与 strategy.js v2 对齐；页面加载�
   wideDrawdown:  [0.08, 0.15, 0.25], // 宽基/红利 回撤分档加仓
   growthDrawdown:[0.10, 0.20, 0.30], // 成长 回撤分档加仓
   dipBudgetRatio: 0.30,        // 深跌时最多额外部署 = 目标金额*30%
+  hpMinStreak: 3,              // 高抛：连涨至少天数
+  hpValHigh: 0.55,             // 高抛：估值分位高于此值视为"偏高"
+  hpGain: { broad: 0.15, value: 0.15, gold: 0.18, growth: 0.25 }, // 高抛：各品类累计盈利触发线
+  hpSellFraction: 1/3,         // 高抛：单次抛出比例（非清仓，仅赚差价）
+  minCashRatio: 0.10,          // 最低现金比例（硬地板）：低吸/建仓绝不超过此线（目标 25% − 15pp）
+  spreadGain: 0.10,            // 短期做差价触发：低吸批次涨幅达此值（10%）
+  spreadMinDays: 3,            // 短期做差价：最短持有天数（避免当日翻转）
+  spreadMaxDays: 21,           // 短期做差价：最长持有窗口（超过视为非短期，转由长线高抛处理）
   historyDays: 90,             // 近3月高点窗口
   refreshMs: 5 * 60 * 1000,    // 交易时段每5分钟自动刷新
   funds: [
@@ -41,6 +49,10 @@ if (window.STRATEGY) {
     wideDrawdown: S.wideDrawdown || CONFIG.wideDrawdown,
     growthDrawdown: S.growthDrawdown || CONFIG.growthDrawdown,
     dipBudgetRatio: S.dipBudgetRatio != null ? S.dipBudgetRatio : CONFIG.dipBudgetRatio,
+    hpMinStreak: S.hpMinStreak != null ? S.hpMinStreak : CONFIG.hpMinStreak,
+    hpValHigh: S.hpValHigh != null ? S.hpValHigh : CONFIG.hpValHigh,
+    hpGain: S.hpGain || CONFIG.hpGain,
+    hpSellFraction: S.hpSellFraction != null ? S.hpSellFraction : CONFIG.hpSellFraction,
     funds: S.funds || CONFIG.funds,
   });
   // 联网加载成功后缓存一份，供离线使用
@@ -71,6 +83,21 @@ function applyPosture() {
   renderAll();
 }
 
+// 最低现金比例（硬地板）：优先取用户配置，否则用引擎默认
+function cashFloorRatio() {
+  return state.minCashRatio != null ? state.minCashRatio : CONFIG.minCashRatio;
+}
+
+// ---------- 国家队三态（手动标记，防御叠加） ----------
+// 国家队（汇金/证金等）动作季报滞后 1–2 月、无公开实时接口，故不自动抓取，由用户据公开信息手动标记。
+// buy=托底信号敢加仓；silence=维持原节奏；retreat=防御（下调建仓系数、收紧现金软顶、暂停低吸、优先高抛）。
+function ntInfo() {
+  const s = state.nationalTeam || 'silence';
+  if (s === 'buy')     return { mult: 1.15, pauseDip: false, retreat: false, label: '🟢 国家队买入中' };
+  if (s === 'retreat') return { mult: 0.75, pauseDip: true,  retreat: true,  label: '🔴 国家队疑似撤退' };
+  return { mult: 1, pauseDip: false, retreat: false, label: '⚪ 国家队静默' };
+}
+
 const STORE_KEY = 'fundAllocatorState_v1';
 
 // ---------- 状态 ----------
@@ -86,7 +113,12 @@ function defaultState() {
     etfCache: {},           // code -> { chgPct, price, name, ts } 盘中预估：按对应场内ETF实时涨跌近似
     lastRefresh: 0,
     riskPosture: 'balanced', // 风险偏好：conservative / balanced / aggressive
-    filled: { dd: {}, tp: {} }, // 已执行的分档记忆：dd[code]=[bool×3], tp[code]=[bool×2]
+    nationalTeam: 'silence',  // 国家队状态：silence 静默 / buy 买入中 / retreat 疑似撤退（手动标记，防御叠加）
+    activeView: 'holdings',   // 当前视图：holdings / advice / config
+    filled: { dd: {}, tp: {}, hp: {}, spread: {} }, // 已执行记忆：dd/tp/hp 分档；spread[lotId]=true 短期差价已执行
+    lots: [],                // 买入批次追踪：{id, code, amount, nav, shares, date, closed}（用于短期做差价）
+    minCashRatio: null,      // 最低现金比例（覆盖引擎默认）；null=用 CONFIG.minCashRatio(0.10)
+    spreadGain: null,        // 短期做差价涨幅阈值（覆盖引擎默认）；null=用 CONFIG.spreadGain(0.10)
     lastNavUpdate: 0,        // 最近一次成功拉取净值的时间戳（毫秒）
     dataMode: 'live',        // live=联网最新 / cache=离线缓存
     dca: { batches: 3, intervalDays: 14, startDate: null, executed: [] }, // 分批建仓计划：分几批 / 每批间隔 / 首批日期 / 已执行批次
@@ -200,6 +232,36 @@ function totals() {
   return { equity, cash, asset, costAll, pnl, pnlPct };
 }
 
+// 连涨天数：基于近期每日涨跌幅序列（most-recent-first）起始的连续正数个数
+function upStreak(code) {
+  const c = state.navCache[code];
+  if (!c || !Array.isArray(c.recentChg)) return 0;
+  let n = 0;
+  for (let i = 0; i < c.recentChg.length; i++) {
+    if (c.recentChg[i] > 0) n++; else break;
+  }
+  return n;
+}
+
+// 轮动目标：找当前低配且估值更便宜的基金（高抛后回笼现金的去向）
+function rotationTarget(excludeCode) {
+  const t = totals();
+  const asset = t.asset || state.amount;
+  const perFund = (CONFIG.indicators && CONFIG.indicators.perFund) || [];
+  let best = null, bestScore = -Infinity;
+  CONFIG.funds.forEach(f => {
+    if (f.code === excludeCode) return;
+    const s = fundStats(f.code);
+    const curW = s.value / asset;
+    const under = f.weight - curW;                       // >0 表示当前低配
+    const ind = perFund.find(p => p.code === f.code) || {};
+    const val = ind.valPct != null ? ind.valPct : 0.5;  // 估值分位越低越便宜
+    const score = under * 2 - val;                      // 越缺 + 越便宜 → 越优先
+    if (score > bestScore) { bestScore = score; best = f; }
+  });
+  return best;
+}
+
 // ---------- 实时净值（东方财富 pingzhongdata 历史净值，每日更新） ----------
 // 说明：联接基金净值每日收盘后更新一次，盘中无可靠免费估算接口，
 // 故以「最新官方净值 + 当日涨跌 + 近3月高点」为数据源，满足每日更新与盈亏跟踪。
@@ -224,7 +286,13 @@ function fetchFundData(code) {
         let high = -Infinity;
         arr.forEach(e => { if (e.x >= cut && e.y > high) high = e.y; });
         if (high === -Infinity) high = null;
-        resolve({ nav, prevNav, dailyChange, date, high });
+        // 近期每日涨跌幅序列（用于"连涨天数"计算，最多保留近 12 日）
+        const recentChg = [];
+        for (let i = arr.length - 1; i >= 1 && recentChg.length < 12; i--) {
+          const a = arr[i].y, b = arr[i - 1].y;
+          recentChg.push(b ? (a - b) / b : 0);
+        }
+        resolve({ nav, prevNav, dailyChange, date, high, recentChg });
       } catch (e) { resolve(null); }
     };
     s.onerror = () => resolve(null);
@@ -243,6 +311,28 @@ function isTradingNow() {
   const am = (h === 9 && m >= 30) || h === 10 || h === 11;
   const pm = (h >= 13 && h < 15);
   return am || pm;
+}
+
+// 距 15:00 收盘剩余分钟数（向上取整，至少 0）
+function minutesToClose(now) {
+  now = now || new Date();
+  const close = new Date(now);
+  close.setHours(15, 0, 0, 0);
+  return Math.max(0, Math.round((close - now) / 60000));
+}
+
+// 是否处于「收盘前紧急窗口」：交易时段内且距收盘 ≤15 分钟
+function isUrgentWindow() {
+  return isTradingNow() && minutesToClose() > 0 && minutesToClose() <= 15;
+}
+
+// 是否"收盘前录入"：交易日且 15:00 前（含午休）。此时当日净值未出，应按昨日净值口径记录，
+// 待当日净值出炉后由 finalizePreClosePositions() 自动用真实净值重算收益。
+function isBeforeClose() {
+  const n = new Date();
+  const wd = n.getDay();
+  if (wd === 0 || wd === 6) return false;
+  return n.getHours() < 15;
 }
 
 // 极简 JSONP（东方财富 push2 行情接口支持 cb 回调）
@@ -297,6 +387,7 @@ async function refreshMarket() {
     const d = await fetchFundData(f.code);
     if (d) state.navCache[f.code] = Object.assign({}, d, { fetchedDate: today });
   }
+  finalizePreClosePositions(); // 当日净值出炉后，自动重算收盘前录入持仓的真实收益
   state.lastRefresh = Date.now();
   state.lastNavUpdate = Date.now();
   // 盘中预估：拉取对应场内 ETF 实时涨跌（已熔断式容错，失败不影响主流程）
@@ -373,26 +464,28 @@ function computeDeployPlan() {
 
   const batches = (state.dca && state.dca.batches) ? state.dca.batches : 3;
   const baseRatio = 1 / batches;                              // 常规节奏：分 N 批
+  const nt = ntInfo();                                        // 国家队三态：买入中→加快、撤退→放慢
   let mult, label;
   if (cheap >= 70)      { mult = 1.5; label = '明显便宜 · 加快部署'; }
   else if (cheap >= 50) { mult = 1.0; label = '中性偏便宜 · 常规节奏'; }
   else if (cheap >= 30) { mult = 0.7; label = '中性偏贵 · 放慢节奏'; }
   else                  { mult = 0.5; label = '偏贵 · 小步试探'; }
-  const ratio = Math.max(0.10, Math.min(0.60, baseRatio * mult));
+  const ratio = Math.max(0.10, Math.min(0.60, baseRatio * mult * nt.mult));
 
-  // 可动用现金：需保留现金纪律下限（cashWeight − 5pp）
-  const cashFloor = (t.asset || 0) * Math.max(0, CONFIG.cashWeight - 0.05);
+  // 可动用现金：需保留最低现金比例（硬地板，可调，默认 10%）
+  const cashFloor = (t.asset || 0) * cashFloorRatio();
   const cashAvail = Math.max(0, t.cash - cashFloor);
   const amount = Math.min(pending * ratio, cashAvail);
 
   const alloc = CONFIG.funds.map(f => ({ f, amt: amount * f.weight }));
-  return { targetEquity, pending, cheap, valPct, dd, ratio, mult, label, amount, alloc, cashAvail, equity: t.equity, missing };
+  return { targetEquity, pending, cheap, valPct, dd, ratio, mult, label, amount, alloc, cashAvail, equity: t.equity, missing, nt };
 }
 
 // ---------- 渲染：智能建仓建议 + 记录实际持仓 ----------
 function renderDCA() {
-  const wrap = $('dcaPanel');
-  if (!wrap) return;
+  const planWrap = $('dcaPlan');         // 智能建仓建议 → 配置页
+  const recWrap = $('recordHoldingWrap'); // 记录实际持仓 → 持仓页
+  if (!planWrap && !recWrap) return;
   if (!state.dca) state.dca = { batches: 3, intervalDays: 14, startDate: null, executed: [] };
   const dca = state.dca;
   const fundOpts = CONFIG.funds.map(f => `<option value="${f.code}">${f.name} (${f.code})</option>`).join('');
@@ -414,10 +507,11 @@ function renderDCA() {
           <div class="dca-funds">${allocRows}</div>
         </div>
         <p class="hint">买入后到下方「📝 记录实际持仓」登记，待部署金额会自动扣减，下次建议随之调整。下次节奏：约 ${dca.intervalDays} 天后，或组合再跌约 5% 可提前加一档。</p>`
-      : `<p class="hint strong">${dp.pending <= 1 ? '已建满：权益已达目标仓位，无需再建仓，后续交给「③ 调仓建议」维护即可。' : '暂不建议建仓：可动用现金已到纪律下限（需保留约 ' + Math.round((CONFIG.cashWeight - 0.05) * 100) + '% 现金），或剩余待部署过小。'}</p>`;
+      : `<p class="hint strong">${dp.pending <= 1 ? '已建满：权益已达目标仓位，无需再建仓，后续交给「③ 调仓建议」维护即可。' : '暂不建议建仓：可动用现金已到最低现金比例（需保留约 ' + Math.round(cashFloorRatio() * 100) + '% 现金），或剩余待部署过小。'}</p>`;
     planHtml = `
       <div class="dca-head">
         <h3>📊 智能建仓建议</h3>
+        <div class="dca-nt ${dp.nt.retreat ? 'nt-red' : dp.nt.mult > 1 ? 'nt-green' : 'nt-gray'}">${dp.nt.label} · 建仓系数 ×${dp.nt.mult}</div>
         <div class="dca-ctrl">
           <label>常规节奏 <select id="dcaBatches">
             <option value="2"${dca.batches === 2 ? ' selected' : ''}>2 批</option>
@@ -472,11 +566,14 @@ function renderDCA() {
     }).join('');
   }
 
-  wrap.innerHTML = `
-    ${planHtml}
+  if (planWrap) planWrap.innerHTML = planHtml;
+  if (recWrap) recWrap.innerHTML = `
     <div class="dca-record">
       <h3>📝 记录实际持仓</h3>
       <p class="hint">滞后录入也没关系：填<b>当下该基金账户的真实持有金额 + 累计收益</b>（赚填正数、亏填负数加 −）。工具按当天净值反推份额与成本基准，之后<b>每天自动按最新净值更新市值和收益</b>。每支基金记一条（再次保存即覆盖更新）。</p>
+      <p class="hint ${isBeforeClose() ? 'warn' : ''}" id="holdTimeHint">${isBeforeClose()
+        ? '⏰ <b>收盘前录入</b>：今日净值尚未出炉，请按<b>昨日收盘市值</b>口径填写持有金额与收益；今日收盘后工具会用真实净值自动重算，无需你再改。'
+        : '📌 已收盘或休市：直接填<b>今日/最近交易日</b>的真实市值与收益即可，工具按该净值记录。'}</p>
       <div class="hold-form">
         <select id="holdFund">${fundOpts}</select>
         <input type="number" id="holdAmount" placeholder="持有金额(元)" />
@@ -504,12 +601,16 @@ function recordHolding() {
   const shares = amount / nav;          // 反推份额：录入日净值 × 份额 = 持有金额
   const cost = amount - profit;         // 反推成本基准：持有金额 − 累计收益 = 投入本金
   const isRe = !!(state.positions[code] && state.positions[code].shares > 0); // 是否覆盖式重新登记
+  const preClose = isBeforeClose();     // 收盘前录入：当日净值未出，用昨日净值口径，收盘后自动重算
+  const navDate = (state.navCache[code] && state.navCache[code].date) || '';
   state.positions[code] = Object.assign(state.positions[code] || {}, {
     shares, cost,
     recordedAt: new Date().toISOString().slice(0, 10),
     navAtRecord: nav,
+    navAtRecordDate: navDate,
     recordedAmount: amount,
     recordedProfit: profit,
+    preClose,
   });
   if (isRe) resetFundMemory(code, false); // 成本基准变了 → 旧的"已执行"分档标记已失效（交易记录保留）
   saveState();
@@ -519,10 +620,35 @@ function recordHolding() {
   renderAll();
 }
 
+// 收盘前录入的持仓：当日净值出炉后，用真实净值重算"录入市值 / 收益"口径，
+// 使②区显示的收益不再停留在昨日估算（份额锚定昨日净值 × 今日净值 = 今日真实市值）。
+function finalizePreClosePositions() {
+  let changed = false;
+  CONFIG.funds.forEach(f => {
+    const p = state.positions[f.code];
+    if (!p || !p.preClose) return;
+    const navC = state.navCache[f.code];
+    if (!navC || navC.nav == null || !navC.date) return;
+    if (!(navC.date > (p.navAtRecordDate || ''))) return; // 还没有比录入日更新的净值
+    const navD = navC.nav;
+    const trueValue = (p.shares || 0) * navD;
+    const truePnl = trueValue - (p.cost || 0);
+    p.recordedAmount = trueValue;
+    p.recordedProfit = truePnl;
+    p.navAtRecord = navD;
+    p.navAtRecordDate = navC.date;
+    p.recordedAt = navC.date;
+    p.preClose = false;
+    changed = true;
+  });
+  if (changed) { saveState(); renderAll(); }
+}
+
 // 清除某只基金的执行记忆残留：止盈 / 低吸分档"已执行"标记，可选一并清交易记录
 function resetFundMemory(code, clearTx) {
   if (state.filled && state.filled.dd) delete state.filled.dd[code];
   if (state.filled && state.filled.tp) delete state.filled.tp[code];
+  if (state.filled && state.filled.hp) delete state.filled.hp[code];
   if (clearTx && Array.isArray(state.tx)) state.tx = state.tx.filter(t => t.code !== code);
 }
 
@@ -583,16 +709,19 @@ function renderHoldings() {
       <td class="${pnlCls}">${fmtPct(s.pnlPct)}</td>`;
     body.appendChild(tr);
   });
-  renderEtfEstimateBar(wSum > 0 ? wChg / wSum : null);
+  _lastPortChg = (wSum > 0 ? wChg / wSum : null);
+  renderEtfEstimateBar(_lastPortChg);
 }
 
 // 组合盘中预估横幅
+let _lastPortChg = null; // 缓存最近一次组合预估，供心跳刷新倒计时
 function renderEtfEstimateBar(portChg) {
   const el = $('etfEstimateBar');
   if (!el) return;
   const codes = CONFIG.funds.filter(f => state.etfCache[f.code] && state.etfCache[f.code].chgPct != null);
   if (codes.length === 0) {
     el.innerHTML = '<span class="etf-empty">📡 今日预估：尚未拉取场内ETF行情，点「🔄 刷新行情」获取（交易时段内为实时，收盘后为今日实际涨跌）。</span>';
+    renderUrgentBanner();
     return;
   }
   const trading = isTradingNow();
@@ -606,6 +735,8 @@ function renderEtfEstimateBar(portChg) {
   }).join('');
   const ts = codes.map(f => state.etfCache[f.code].ts).sort((a, b) => b - a)[0];
   const tsTxt = ts ? new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '';
+  const urgent = isUrgentWindow();
+  el.classList.toggle('etf-urgent', urgent);
   el.innerHTML = `
     <span class="etf-label">${trading ? '📡 盘中预估' : '📡 收盘预估'}（按对应场内ETF实时涨跌近似）</span>
     <span class="etf-port ${cls}">组合约 ${fmtPct(portChg)}</span>
@@ -613,6 +744,20 @@ function renderEtfEstimateBar(portChg) {
     <span class="etf-chips">${perFund}</span>
     <span class="etf-time">更新 ${tsTxt}</span>
     <span class="etf-tip">估计你<b>${trading ? '现在下单' : '下一交易日开盘前下单'}</b>的成交净值较昨收约变动这么多（未知价成交，仅供参考）</span>`;
+  renderUrgentBanner();
+}
+
+// 收盘前紧急横幅：14:45–15:00 期间提示距收盘剩余时间，避免错过当日净值成交
+function renderUrgentBanner() {
+  const b = $('closeUrgentBanner');
+  if (!b) return;
+  if (isUrgentWindow()) {
+    const m = minutesToClose();
+    b.hidden = false;
+    b.innerHTML = `⏰ <b>距 15:00 收盘仅剩 ${m} 分钟</b>｜场外基金 <b>15:00 前</b>下单按<b>今日净值</b>成交，未操作将顺延至 <b>T+1 日净值</b>。想今天建仓 / 止盈 / 低吸的，请现在打开基金 APP 完成买入卖出。`;
+  } else {
+    b.hidden = true;
+  }
 }
 
 function fillTradeFundOptions() {
@@ -641,15 +786,34 @@ function recordTrade() {
     if (amount > available + 1e-6) { alert('可用资金不足，剩余可投 ¥' + fmt(available)); return; }
     const shares = amount / nav;
     state.positions[code] = { shares: pos.shares + shares, cost: pos.cost + amount };
-  } else { // sell
+    // 登记为一个「买入批次」，供短期做差价追踪（涨达阈值即建议卖出该批次赚差价）
+    state.lots = state.lots || [];
+    state.lots.push({ id: 'L' + Date.now() + '_' + Math.random().toString(36).slice(2, 5), code, amount, nav, shares, date, closed: false });
+  } else { // sell — 按份额卖出
     if (pos.shares <= 0) { alert('该基金无持仓'); return; }
-    const sharesSold = amount / nav;
-    if (sharesSold > pos.shares + 1e-9) { alert('卖出份额超过持仓'); return; }
+    const sharesSold = amount; // 卖出时 amount 代表"份额"
+    if (!(sharesSold > 0)) { alert('请输入有效份额'); return; }
+    if (sharesSold > pos.shares + 1e-9) { alert('卖出份额超过持仓（当前 ' + fmt(pos.shares) + ' 份）'); return; }
     const costReduce = pos.cost * (sharesSold / pos.shares);
     state.positions[code] = { shares: pos.shares - sharesSold, cost: pos.cost - costReduce };
+    // FIFO 扣减对应买入批次的份额（短期做差价追踪用）
+    let remaining = sharesSold;
+    if (state.lots) {
+      for (const lot of state.lots) {
+        if (remaining <= 1e-9) break;
+        if (lot.code !== code || lot.closed || lot.shares <= 0) continue;
+        const take = Math.min(lot.shares, remaining);
+        lot.shares -= take;
+        remaining -= take;
+        if (lot.shares <= 1e-9) { lot.shares = 0; lot.closed = true; }
+      }
+    }
   }
 
-  state.tx.push({ id: Date.now() + '_' + Math.random().toString(36).slice(2, 7), code, type, date, amount, nav });
+  // tx 记录：买入 amount=投入金额、shares=购入份额；卖出 amount=回笼金额(份额×净值)、shares=卖出份额
+  const txAmount = type === 'sell' ? sharesSold * nav : amount;
+  const txShares = type === 'sell' ? sharesSold : (amount / nav);
+  state.tx.push({ id: Date.now() + '_' + Math.random().toString(36).slice(2, 7), code, type, date, amount: txAmount, nav, shares: txShares });
 
   // 标记已执行：买入 → 当前触发的低吸档；卖出 → 当前触发的止盈档（避免建议反复出现）
   const f = fundByCode(code);
@@ -683,6 +847,17 @@ function buildAdvice() {
   const cashRatio = t.cash / asset;
   const deployed = state.amount * (1 - CONFIG.cashWeight);
 
+  // 国家队三态：买入中→原节奏；静默→原节奏；疑似撤退→防御（下调建仓系数已在 computeDeployPlan 处理、此处收紧现金软顶 + 暂停低吸 + 顶部横幅）
+  const nt = ntInfo();
+  const cap = nt.retreat ? CONFIG.cashCap * 0.7 : CONFIG.cashCap; // 撤退期把现金软顶从 30% 收紧到 21%，现金更快回补
+  if (nt.retreat) {
+    list.unshift({
+      type: 'info', title: '🇨🇳 国家队疑似撤退 · 防御模式',
+      body: '你已标记「国家队疑似撤退」。本工具<b>不</b>建议清仓离场（指数长期向上 + 个人投基金免资本利得税，底部清仓 = 浮亏变实亏且丢低位筹码），但会<b>收紧姿态</b>：建仓系数下调、现金软顶收紧（回补更快）、<b>暂停低吸</b>、并优先高抛锁定收益。耐心等托底信号回归。',
+      reason: '国家队三态 · 防御叠加',
+    });
+  }
+
   // 注：不再用「单日已实现涨跌」当操作门禁。场外基金按下一交易日收盘净值（未知价）成交，
   // 当日收盘涨跌属于历史值，用它约束未来操作存在时间错位。改用近期年化波动判断执行节奏（见末尾「波动纪律」）。
 
@@ -693,7 +868,7 @@ function buildAdvice() {
     const diff = currentWeight - targetWeight;
 
     // 1) 偏离再平衡（现金已超软顶时暂停减持，优先把现金部署回市场）
-    if (diff > CONFIG.driftThreshold && cashRatio <= CONFIG.cashCap) {
+    if (diff > CONFIG.driftThreshold && cashRatio <= cap) {
       const sellAmt = diff * asset;
       list.push({
         type: 'sell', title: `再平衡：减持 ${f.name}`,
@@ -728,9 +903,36 @@ function buildAdvice() {
       });
     }
 
-    // 3) 回撤分档加仓（需近3月高点；已执行则消失；价格回升突破该档自动重置）
+    // 2.5) 高抛赚差价：连涨 + 已有盈利 + 估值偏高 → 部分抛出（非清仓）→ 轮动补更便宜/低配基金
+    {
+      const gainTh = (CONFIG.hpGain && CONFIG.hpGain[f.cat] != null) ? CONFIG.hpGain[f.cat] : 0.15;
+      const streak = upStreak(f.code);
+      const ind = (CONFIG.indicators && CONFIG.indicators.perFund || []).find(p => p.code === f.code) || {};
+      const valPct = ind.valPct != null ? ind.valPct : 0.5;
+      const hp = state.filled.hp = state.filled.hp || {};
+      const hpArr = hp[f.code] = hp[f.code] || [false];
+      // 触发条件消失 → 复位，允许未来再次触发（与成长止盈的回吐重置同理）
+      if (s.pnlPct < gainTh * 0.5 || valPct < CONFIG.hpValHigh * 0.7 || streak === 0) hpArr[0] = false;
+      if (s.cost > 0 && s.pnl > 0 && streak >= CONFIG.hpMinStreak && s.pnlPct >= gainTh && valPct >= CONFIG.hpValHigh && !hpArr[0]) {
+        const alreadySell = list.some(x => x.type === 'sell' && x.title.indexOf(f.name) >= 0); // 避免与成长止盈同基金同日重复
+        if (!alreadySell) {
+          const sellAmt = s.value * CONFIG.hpSellFraction;
+          const tgt = rotationTarget(f.code);
+          const tgtName = tgt ? tgt.name : '更低配/低估的基金';
+          hpArr[0] = true;
+          list.push({
+            type: 'sell', key: `hp-${f.code}-0`, sub: '高抛赚差价',
+            title: `高抛：部分减持 ${f.name}`,
+            body: `连续上涨 <b>${streak} 天</b>、累计盈利 <b>${fmtPct(s.pnlPct)}</b>、估值分位 <b>${(valPct*100).toFixed(0)}%</b> 偏高，建议卖出约 <b>1/3 持仓（¥${fmt(sellAmt)}）</b>锁定收益，回笼现金轮动补入${tgt ? `更低估/低配的 <b>${tgtName}</b>` : '更低配/低估的基金'}。<br><b>注：高抛非清仓，仅赚差价</b>，剩余 2/3 继续持有。`,
+            reason: `高抛赚差价：连涨${streak}天 + 盈利${(s.pnlPct*100).toFixed(0)}% + 估值分位${(valPct*100).toFixed(0)}%偏高`,
+          });
+        }
+      }
+    }
+
+    // 3) 回撤分档加仓（需近3月高点；已执行则消失；价格回升突破该档自动重置）。国家队疑似撤退时暂停低吸。
     const high = state.navCache[f.code] && state.navCache[f.code].high;
-    if (high && s.nav && f.cat !== 'gold') {  // 黄金为避险资产，不做回撤分档加仓，仅靠偏离再平衡
+    if (!nt.pauseDip && high && s.nav && f.cat !== 'gold') {  // 黄金为避险资产，不做回撤分档加仓，仅靠偏离再平衡
       const dd = (s.nav - high) / high; // 负值=回撤
       const steps = f.cat === 'growth' ? CONFIG.growthDrawdown : CONFIG.wideDrawdown;
       const fd = state.filled.dd[f.code] = state.filled.dd[f.code] || steps.map(() => false);
@@ -740,7 +942,7 @@ function buildAdvice() {
         if (fd[i]) return;                           // 已执行 → 跳过
         const budget = deployed * f.weight * CONFIG.dipBudgetRatio;
         const tranche = budget / steps.length;
-        const buyAmt = Math.min(tranche, t.cash);
+        const buyAmt = Math.min(tranche, Math.max(0, t.cash - (t.asset || 0) * cashFloorRatio())); // 与智能建仓同守最低现金比例地板
         if (buyAmt > 1) {
           list.push({
             type: 'buy', key: `dd-${f.code}-${i}`,
@@ -749,6 +951,33 @@ function buildAdvice() {
             reason: `回撤分档加仓（宽基 -8/-15/-25，成长 -10/-20/-30）`,
           });
         }
+      });
+    }
+  });
+
+  // 3.5) 短期做差价：低吸/买入批次在短期(3~21天)内涨达阈值(默认10%)→卖出该批次赚差价（非清仓）
+  const spreadGain = state.spreadGain != null ? state.spreadGain : CONFIG.spreadGain;
+  (state.lots || []).forEach(lot => {
+    if (lot.closed) return;
+    const f = fundByCode(lot.code);
+    if (!f) return;
+    const nav = currentNav(lot.code);
+    if (nav == null) return;
+    const gain = (nav - lot.nav) / lot.nav;
+    const days = Math.max(0, Math.floor((Date.now() - new Date(lot.date).getTime()) / 86400000));
+    if (gain >= spreadGain && days >= CONFIG.spreadMinDays && days <= CONFIG.spreadMaxDays) {
+      const filledSpread = state.filled.spread = state.filled.spread || {};
+      if (filledSpread[lot.id]) return; // 已执行 → 跳过
+      const sellShares = lot.shares;
+      const sellAmt = sellShares * nav;
+      const profit = sellAmt - lot.amount;
+      const tgt = rotationTarget(lot.code);
+      const tgtName = tgt ? tgt.name.replace('ETF联接A', '').replace('ETF联接', '') : '';
+      list.push({
+        type: 'sell', key: `spread-${lot.id}`, sub: '短期差价',
+        title: `短期差价：卖出 ${f.name} 低吸批次`,
+        body: `低吸批次（${lot.date}，投入 ¥${fmt(lot.amount)}）持有 <b>${days} 天</b>已涨 <b>${fmtPct(gain)}</b>，达短期做差价触发线（≥${fmtPct(spreadGain)}），建议<b>卖出该批次</b>约 <b>¥${fmt(sellAmt)}</b>，落袋收益约 <b>¥${fmt(profit)}</b>。${tgt ? `回笼现金轮动补入更低估/低配的 <b>${tgtName}</b>。` : ''}<br><b>注：仅卖这批次，非清仓</b>，其余持仓继续持有。`,
+        reason: `短期做差价：低吸批次 ${days} 天 +${fmtPct(gain)}（阈值≥${fmtPct(spreadGain)}、持有 ${CONFIG.spreadMinDays}~${CONFIG.spreadMaxDays} 天）`,
       });
     }
   });
@@ -810,8 +1039,8 @@ function buildAdvice() {
   });
   if (lossCards.length) [...lossCards].reverse().forEach(c => list.unshift(c));
 
-  // 4.5) 现金软顶回补：占比超 cashCap 时，按目标权重把多余现金买回基金，防牛市现金无限堆积
-  if (cashRatio > CONFIG.cashCap) {
+  // 4.5) 现金软顶回补：占比超 cap 时，按目标权重把多余现金买回基金，防牛市现金无限堆积（撤退期 cap 已收紧）
+  if (cashRatio > cap) {
     const excess = t.cash - (state.amount || 0) * CONFIG.cashWeight; // 回补到目标现金
     const fc = state.filled.cap = state.filled.cap || {};
     if (excess > 1) {
@@ -832,9 +1061,9 @@ function buildAdvice() {
     state.filled.cap = {}; // 现金回到软顶内，复位回补标记
   }
 
-  // 4) 现金纪律（目标随市场浮动，以 cashWeight ±5pp 为区间）
-  if (cashRatio < CONFIG.cashWeight - 0.05) {
-    list.unshift({ type: 'info', title: '现金低于目标', body: `现金占比 ${(cashRatio*100).toFixed(1)}%，低于目标 ${(CONFIG.cashWeight*100).toFixed(0)}% 约 5 个百分点，按纪律暂停所有加仓，优先保留弹药，等待再平衡或止盈释放现金。`, reason: '现金纪律（目标随市场浮动）' });
+  // 4) 现金纪律（目标随市场浮动；最低现金比例为硬地板）
+  if (cashRatio < cashFloorRatio()) {
+    list.unshift({ type: 'info', title: '现金低于最低比例', body: `现金占比 ${(cashRatio*100).toFixed(1)}%，已触最低现金比例 ${(cashFloorRatio()*100).toFixed(0)}%，按纪律暂停所有加仓，优先保留弹药，等待再平衡或止盈释放现金。`, reason: '现金纪律（最低现金比例地板）' });
   } else if (cashRatio > CONFIG.cashWeight + 0.05 && cashRatio <= CONFIG.cashCap) {
     list.unshift({ type: 'info', title: '现金高于目标', body: `当前现金占比 ${(cashRatio*100).toFixed(1)}%，高于目标 ${(CONFIG.cashWeight*100).toFixed(0)}% 约 5 个百分点，偏高，建议择机建仓以防踏空（优先补齐偏离目标的基金）。`, reason: '现金纪律（目标随市场浮动）' });
   }
@@ -881,12 +1110,48 @@ function renderAdvice() {
     </div>`;
   wrap.innerHTML = banner + list.map(a => `
     <div class="advice ${a.type}">
-      <div class="a-head"><span class="tag ${a.type}">${a.type === 'buy' ? '买入' : a.type === 'sell' ? '卖出' : a.type === 'loss' ? '亏损评估' : '提示'}</span>${a.title}
+      <div class="a-head"><span class="tag ${a.type}">${a.type === 'buy' ? '买入' : a.type === 'sell' ? '卖出' : a.type === 'loss' ? '亏损评估' : '提示'}</span>${a.sub ? `<span class="tag sub">${a.sub}</span>` : ''}${a.title}
         ${a.key ? `<button class="a-done" data-key="${a.key}">✓ 我已执行</button>` : ''}
       </div>
       <div class="a-body">${a.body}</div>
       ${a.reason ? `<div class="a-reason">依据：${a.reason}</div>` : ''}
     </div>`).join('');
+}
+
+// ---------- 买入批次追踪（短期做差价用） ----------
+function renderLots() {
+  const wrap = $('lotsWrap');
+  if (!wrap) return;
+  const lots = (state.lots || []).filter(l => !l.closed);
+  if (lots.length === 0) {
+    wrap.innerHTML = '<p class="hint lots-empty">📦 暂无进行中的买入批次（低吸/买入后会自动追踪，涨达阈值即提醒做差价）。</p>';
+    return;
+  }
+  let rows = '';
+  lots.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).forEach(lot => {
+    const f = fundByCode(lot.code);
+    const nav = currentNav(lot.code);
+    const gain = (nav != null && lot.nav > 0) ? (nav - lot.nav) / lot.nav : null;
+    const days = Math.max(0, Math.floor((Date.now() - new Date(lot.date).getTime()) / 86400000));
+    const cls = gain == null ? 'flat' : gain > 0.0001 ? 'up' : gain < -0.0001 ? 'down' : 'flat';
+    const gainTxt = gain == null ? '—' : fmtPct(gain);
+    const prog = Math.min(100, Math.max(0, (gain != null ? gain : 0) * 100)); // 简易进度（10%≈100%）
+    rows += `<tr>
+      <td>${lot.date}</td>
+      <td>${f ? f.name.replace('ETF联接A','').replace('ETF联接','') : lot.code}</td>
+      <td>¥${fmt(lot.amount)}</td>
+      <td class="${cls}">${gainTxt}</td>
+      <td>${days} 天</td>
+      <td><div class="lot-bar"><i style="width:${prog}%"></i></div></td>
+    </tr>`;
+  });
+  wrap.innerHTML = `
+    <h3>📦 买入批次追踪（短期做差价）</h3>
+    <p class="hint">每笔买入自动登记为一个批次，持有 3~21 天且涨幅达阈值（默认 +10%）即弹出「短期差价」卖出建议。下方显示进行中批次的浮盈与持有天数。</p>
+    <div class="table-wrap">
+      <table><thead><tr><th>日期</th><th>基金</th><th>投入</th><th>浮盈</th><th>持有</th><th>进度</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </div>`;
 }
 
 // ---------- 交易记录 ----------
@@ -934,7 +1199,7 @@ function renderCashPanel() {
   const gap = t.cash - targetCash;
   const cashRatio = t.asset > 0 ? t.cash / t.asset : 0;
   let status, cls;
-  if (cashRatio < CONFIG.cashWeight - 0.05) { status = '偏低 · 暂停加仓'; cls = 'down'; }
+  if (cashRatio < cashFloorRatio()) { status = '偏低 · 暂停加仓'; cls = 'down'; }
   else if (cashRatio > CONFIG.cashWeight + 0.05) { status = '偏高 · 择机建仓'; cls = 'up'; }
   else { status = '正常'; cls = 'flat'; }
   $('cashPanel').innerHTML = `
@@ -1015,7 +1280,44 @@ function renderAll() {
   renderCashPanel();
   renderAdvice();
   renderLog();
+  renderLots();
   renderMascot();
+  renderSignals();
+  applyView();
+}
+
+// ---------- 视图切换（三页分离：持仓与行情 / 调仓建议 / 配置） ----------
+let activeView = (state.activeView && ['holdings', 'advice', 'config'].includes(state.activeView)) ? state.activeView : 'holdings';
+function applyView() {
+  ['holdings', 'advice', 'config'].forEach(v => {
+    const el = $('view-' + v);
+    if (el) el.classList.toggle('active', v === activeView);
+  });
+  document.querySelectorAll('.bottomnav button').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === activeView);
+  });
+  if (activeView === 'holdings') renderEtfEstimateBar(_lastPortChg); // 切到持仓页时刷新盘中预估
+}
+function switchView(v) {
+  if (!['holdings', 'advice', 'config'].includes(v)) return;
+  activeView = v;
+  if (state) { state.activeView = v; saveState(); }
+  applyView();
+  window.scrollTo(0, 0);   // 翻页总是从顶部开始
+  const tb = $('toTopBtn'); // 新页面从顶部起，隐藏回到顶部按钮
+  if (tb) tb.classList.remove('show');
+}
+// 国家队提示文案（配置页）
+function renderSignals() {
+  const tip = $('ntTip');
+  if (tip) {
+    const map = {
+      buy: '托底信号明确：敢在便宜时加仓、低吸更积极。',
+      silence: '无明显动作：按市场便宜度原节奏走。',
+      retreat: '谨慎追高：优先高抛、暂停低吸、现金软顶收紧。',
+    };
+    tip.textContent = map[state.nationalTeam || 'silence'];
+  }
 }
 
 // ---------- 事件绑定 ----------
@@ -1059,7 +1361,18 @@ function init() {
   $('adviceList').addEventListener('click', (e) => {
     const btn = e.target.closest('.a-done');
     if (!btn) return;
-    const parts = btn.dataset.key.split('-'); // tp-CODE-i 或 dd-CODE-i
+    const key = btn.dataset.key;
+    if (key.indexOf('spread-') === 0) { // 短期做差价：标记该批次已执行并关闭
+      const lotId = key.slice('spread-'.length);
+      const filledSpread = state.filled.spread = state.filled.spread || {};
+      filledSpread[lotId] = true;
+      const lot = (state.lots || []).find(l => l.id === lotId);
+      if (lot) lot.closed = true;
+      saveState();
+      renderAll();
+      return;
+    }
+    const parts = key.split('-'); // tp-CODE-i 或 dd-CODE-i
     const type = parts[0], code = parts[1], idx = +parts[2];
     const arr = state.filled[type][code] = state.filled[type][code] || [];
     arr[idx] = true;
@@ -1115,8 +1428,57 @@ function init() {
     });
   }
 
-  // 分批建仓 / 记录实际持仓 交互（事件委托到容器，innerHTML 重建后仍有效）
-  const dcaWrap = $('dcaPanel');
+  // 🇨🇳 国家队状态（手动标记，防御叠加）
+  const ntSel = $('ntSel');
+  if (ntSel) {
+    ntSel.value = state.nationalTeam || 'silence';
+    ntSel.addEventListener('change', () => {
+      state.nationalTeam = ntSel.value;
+      saveState();
+      renderAll();
+    });
+  }
+
+  // 💰 最低现金比例（硬地板，可调）
+  const minCashSel = $('minCashSel');
+  if (minCashSel) {
+    minCashSel.value = String(state.minCashRatio != null ? state.minCashRatio : CONFIG.minCashRatio);
+    minCashSel.addEventListener('change', () => {
+      state.minCashRatio = parseFloat(minCashSel.value);
+      saveState();
+      renderAll();
+    });
+  }
+  // 🔁 短期做差价涨幅阈值
+  const spreadSel = $('spreadSel');
+  if (spreadSel) {
+    spreadSel.value = String(state.spreadGain != null ? state.spreadGain : CONFIG.spreadGain);
+    spreadSel.addEventListener('change', () => {
+      state.spreadGain = parseFloat(spreadSel.value);
+      saveState();
+      renderAll();
+    });
+  }
+
+  // 底部导航：三页切换
+  document.querySelectorAll('.bottomnav button').forEach(b => {
+    b.addEventListener('click', () => switchView(b.dataset.view));
+  });
+
+  // 回到顶部浮动按钮：滚动超过阈值浮现，点击平滑回顶（所有页面通用，页面级固定）
+  const toTopBtn = $('toTopBtn');
+  if (toTopBtn) {
+    const onScroll = () => {
+      if (window.scrollY > 240) toTopBtn.classList.add('show');
+      else toTopBtn.classList.remove('show');
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    toTopBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+    onScroll();
+  }
+
+  // 分批建仓 / 记录实际持仓 交互（事件委托到 #views 容器，innerHTML 重建后仍有效）
+  const dcaWrap = $('views');
   if (dcaWrap) {
     dcaWrap.addEventListener('click', (e) => {
       if (e.target.closest('#dcaRegenBtn')) {
@@ -1153,6 +1515,11 @@ function init() {
     const trading = (h === 9 && m >= 30) || h === 10 || h === 11 || (h >= 13 && h < 15);
     if (trading) refreshMarket();
   }, CONFIG.refreshMs);
+
+  // 收盘前紧急窗口心跳：每60秒刷新倒计时横幅（仅重渲染，不重新拉取行情）
+  setInterval(() => {
+    if (isUrgentWindow()) renderEtfEstimateBar(_lastPortChg);
+  }, 60 * 1000);
 }
 
 function autoFillNav() {

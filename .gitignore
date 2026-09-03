@@ -1,0 +1,6 @@
+# 本地临时测试脚本，不部署
+corr-check.js
+
+# 依赖与日志
+node_modules/
+*.log

@@ -38,12 +38,8 @@
     </div>
   </header>
 
-  <nav class="tabs">
-    <a href="#sec-config">① 配置</a>
-    <a href="#sec-holdings">② 持仓 / 行情</a>
-    <a href="#sec-advice">③ 调仓建议</a>
-    <a href="#sec-log">④ 交易记录</a>
-  </nav>
+  <!-- 收盘前紧急横幅：14:45–15:00 自动出现 -->
+  <div id="closeUrgentBanner" class="urgent-banner" hidden></div>
 
   <!-- 理财猫对话条 -->
   <div class="mascot-bar">
@@ -68,125 +64,177 @@
     <div class="mascot-talk" id="mascotMsg">嗨，我是理财猫～把金额填上，咱们慢慢建仓 🐱</div>
   </div>
 
-  <!-- 策略面板（理财财每日自动维护） -->
-  <section id="sec-strategy" class="card strategy">
-    <h2>🔄 策略面板（理财财每日自动更新）</h2>
-    <p class="hint">比例 / 现金 / 阈值 / 基金列表由<b>「理财财市场自适应引擎」每日收盘后拉取真实行情自动计算</b>。你<b>无需再找我聊</b>——打开页面即是最新版。仅在想改进功能或调整底层投资逻辑时，才需要回来找我。</p>
-    <div class="posture-row">
-      <label>我的风险偏好（底仓姿态）：</label>
-      <select id="postureSel">
-        <option value="conservative">稳健（少波动）</option>
-        <option value="balanced">平衡（推荐）</option>
-        <option value="aggressive">进取（多弹性）</option>
-      </select>
-      <span class="hint-inline">引擎在评估结果之上叠加此偏好，不影响自动调仓节奏。</span>
-    </div>
-    <div id="strategyMeta" class="strategy-meta"></div>
-    <div class="strategy-actions">
-      <button id="applyDefaultBtn" class="btn">↩ 恢复默认（引擎基线 + 平衡偏好）</button>
-    </div>
-    <details class="strategy-import">
-      <summary>手动粘贴策略 JSON 以临时覆盖（覆盖自动版，直到点上方恢复默认）</summary>
-      <textarea id="strategyInput" placeholder='粘贴理财财提供的策略 JSON，例如 {"version":"2026-08-01-v3","cashWeight":0.25,"funds":[...]}'></textarea>
-      <button id="importStrategyBtn" class="btn btn-primary">套用此策略</button>
-    </details>
-  </section>
-
-  <!-- 组合总览 -->
-  <section class="summary" id="summary">
-    <div class="summary-grid">
-      <div class="stat"><span class="label">总投入</span><span class="value" id="s-total">—</span></div>
-      <div class="stat"><span class="label">权益市值</span><span class="value" id="s-equity">—</span></div>
-      <div class="stat"><span class="label">现金</span><span class="value" id="s-cash">—</span></div>
-      <div class="stat"><span class="label">总资产</span><span class="value" id="s-asset">—</span></div>
-      <div class="stat"><span class="label">总收益</span><span class="value" id="s-pnl">—</span></div>
-      <div class="stat"><span class="label">收益率</span><span class="value" id="s-pnl-pct">—</span></div>
-    </div>
-  </section>
-
-  <!-- ① 配置 -->
-  <section id="sec-config" class="card">
-    <h2>① 设定可投金额</h2>
-    <div class="row">
-      <label>可投金额（元）</label>
-      <div class="inline">
-        <input type="number" id="amountInput" placeholder="例如 1000000" />
-        <button id="genConfigBtn" class="btn btn-primary">设定初投金额</button>
+  <main id="views">
+    <!-- ===== 第 1 页：持仓与行情 ===== -->
+    <section id="view-holdings" class="view">
+      <div class="summary" id="summary">
+        <div class="summary-grid">
+          <div class="stat"><span class="label">总投入</span><span class="value" id="s-total">—</span></div>
+          <div class="stat"><span class="label">权益市值</span><span class="value" id="s-equity">—</span></div>
+          <div class="stat"><span class="label">现金</span><span class="value" id="s-cash">—</span></div>
+          <div class="stat"><span class="label">总资产</span><span class="value" id="s-asset">—</span></div>
+          <div class="stat"><span class="label">总收益</span><span class="value" id="s-pnl">—</span></div>
+          <div class="stat"><span class="label">收益率</span><span class="value" id="s-pnl-pct">—</span></div>
+        </div>
       </div>
-      <p class="hint strong">⚠️ 请输入 <b>100% 的总可投金额</b>（你准备投入这个计划的全部本金）。<b>不要自己先扣 20%</b>——工具会自动从中预留 20% 作现金机动，剩下 80% 部署到 5 只基金。例：打算投 100 万，就填 1000000。</p>
-    </div>
-    <div class="row">
-      <label>后续追加投资（元）</label>
-      <div class="inline">
-        <input type="number" id="addAmountInput" placeholder="例如 500000" />
-        <button id="addInvestBtn" class="btn">追加</button>
-      </div>
-      <p class="hint">后期想再加钱时点这里：填<b>新增</b>的金额（不是累计）。新钱进入现金池，目标配置同步上调，你再按建议逐步部署。已登记的持仓与盈亏全程保留。</p>
-    </div>
-    <p class="hint">比例 / 现金 / 阈值 / 基金列表由<b>理财财结合当下行情动态维护</b>（见顶部「策略面板」），页面加载即套用最新版。如需微调可在策略面板粘贴 JSON 或由理财财更新。</p>
-    <div id="targetTableWrap" class="table-wrap"></div>
-    <div id="dcaPanel" class="dca-panel"></div>
-  </section>
 
-  <!-- ② 持仓 / 行情 -->
-  <section id="sec-holdings" class="card">
-    <h2>② 持仓与实时行情</h2>
-    <p class="hint">买入后，在「① 配置」的 <b>📝 记录实际持仓</b> 里登记最省事：选基金 + 填持有金额 + 填持有收益即可，滞后录入也没关系；也可用下方逐笔「记录交易」（买入/卖出/净值）。登记后这里显示市值与盈亏，每次打开或点「刷新行情」会按最新净值重算。</p>
-    <div id="etfEstimateBar" class="etf-est"></div>
-    <div class="table-wrap">
-      <table id="holdingsTable">
-        <thead>
-          <tr>
-            <th>基金</th><th>代码</th><th>持仓金额</th><th>最新净值</th>
-            <th>净值涨跌</th><th>今日预估</th><th>市值</th><th>盈亏</th><th>盈亏%</th>
-          </tr>
-        </thead>
-        <tbody id="holdingsBody"></tbody>
-        <tfoot id="holdingsFoot"></tfoot>
-      </table>
-    </div>
+        <section class="card">
+        <h2>持仓与实时行情</h2>
+        <p class="hint">买入后，在下方 <b>📝 记录实际持仓</b> 里登记最省事：选基金 + 填持有金额 + 填持有收益即可，滞后录入也没关系。登记后这里显示市值与盈亏，每次打开或点「刷新行情」会按最新净值重算。逐笔买卖流水请到「💡调仓建议」页顶部的 📜 交易记录 里登记。</p>
+        <div id="etfEstimateBar" class="etf-est"></div>
+        <div class="table-wrap">
+          <table id="holdingsTable">
+            <thead>
+              <tr>
+                <th>基金</th><th>代码</th><th>持仓金额</th><th>最新净值</th>
+                <th>净值涨跌</th><th>今日预估</th><th>市值</th><th>盈亏</th><th>盈亏%</th>
+              </tr>
+            </thead>
+            <tbody id="holdingsBody"></tbody>
+            <tfoot id="holdingsFoot"></tfoot>
+          </table>
+        </div>
+        <div class="cash-panel" id="cashPanel"></div>
+      </section>
 
-    <div class="cash-panel" id="cashPanel"></div>
+      <section class="card" id="recordHoldingWrap"></section>
+    </section>
 
-    <details class="trade-box">
-      <summary>记录交易（逐笔流水 · 高级用法，日常请用「① 配置」的 📝 记录实际持仓）</summary>
-      <div class="trade-grid">
-        <select id="tradeFund"></select>
-        <select id="tradeType">
-          <option value="buy">买入（用现金）</option>
-          <option value="sell">卖出（回笼现金）</option>
-        </select>
-        <input type="number" id="tradeAmount" placeholder="金额(元)" />
-        <input type="number" id="tradeNav" placeholder="净值(留空用估算)" step="0.0001" />
-        <input type="date" id="tradeDate" />
-        <button id="tradeSubmit" class="btn btn-primary">登记</button>
-      </div>
-      <p class="hint" id="tradeHint">这里留给两种场景：<b>① 刚发生的买卖</b>，想当场记一笔（先点「刷新行情」，净值会自动带入）；<b>② 想保留逐笔流水</b>，好在「④ 交易记录」回看每笔的日期、净值、方向。<b>日常补录 / 滞后录入请优先用「① 配置」的 📝 记录实际持仓</b>——只要持有金额 + 持有收益两个数，更准也更快。<b>两者可以混用</b>：记录实际持仓会重设当前基准，记录交易在基准之上累加或扣减。</p>
-    </details>
-  </section>
+    <!-- ===== 第 2 页：调仓建议 ===== -->
+    <section id="view-advice" class="view">
+      <section class="card">
+        <h2>📜 交易记录</h2>
+        <p class="hint">这里汇总你所有已登记的买卖（含「记录实际持仓」与「记录交易」）。它是「调仓建议」的落地账本——建议给了，执行与否、成交多少，都在这里回看。</p>
 
-  <!-- ③ 调仓建议 -->
-  <section id="sec-advice" class="card">
-    <h2>③ 调仓建议（按我们的纪律自动生成）</h2>
-    <p class="hint">规则：季度再平衡（任一只偏离目标达阈值调回，阈值见顶部「策略面板」）；成长分批止盈（档位见策略面板）；宽基 / 红利 / 成长按近 3 月高点回撤分档加仓；现金目标随市场在 10%–30% 浮动（实时值见顶部「策略面板」），不做死板固定；执行节奏看「近期年化波动」（高波动→分批、低波动→正常执行），不拿单日已实现涨跌当操作开关。所有金额均为<b>目标金额</b>，实际成交用你下单那天的收盘价（未知价成交）——交易时段内可看「② 持仓」顶部的「📡 盘中预估」缩小落差。</p>
-    <div id="adviceList" class="advice-list"></div>
-  </section>
+        <div class="trade-box">
+          <h3>➕ 登记买卖</h3>
+          <p class="hint"><b>买入</b>＝用现金加仓（填<b>金额</b>，如低吸补一点就填实际加的元）；<b>卖出</b>＝落袋/止盈（填<b>份额</b>，按你卖出的那部分份数）。日常建仓/补录也可直接用「持仓行情」页的 📝 记录实际持仓（更省事）。</p>
+          <div class="trade-grid">
+            <select id="tradeFund"></select>
+            <select id="tradeType">
+              <option value="buy">买入（用现金）</option>
+              <option value="sell">卖出（回笼现金）</option>
+            </select>
+            <input type="number" id="tradeAmount" placeholder="买入填金额(元) / 卖出填份额" />
+            <input type="number" id="tradeNav" placeholder="净值(留空用估算)" step="0.0001" />
+            <input type="date" id="tradeDate" />
+            <button id="tradeSubmit" class="btn btn-primary">登记</button>
+          </div>
+        </div>
 
-  <!-- ④ 交易记录 -->
-  <section id="sec-log" class="card">
-    <h2>④ 交易记录</h2>
-    <div class="table-wrap">
-      <table id="logTable">
-        <thead><tr><th>日期</th><th>基金</th><th>方向</th><th>金额</th><th>净值</th></tr></thead>
-        <tbody id="logBody"></tbody>
-      </table>
-    </div>
-    <button id="resetBtn" class="btn btn-danger">清空全部数据</button>
-  </section>
+        <div id="lotsWrap" class="lots-wrap"></div>
+
+        <div class="table-wrap">
+          <table id="logTable">
+            <thead><tr><th>日期</th><th>基金</th><th>方向</th><th>金额</th><th>净值</th></tr></thead>
+            <tbody id="logBody"></tbody>
+          </table>
+        </div>
+        <button id="resetBtn" class="btn btn-danger">清空全部数据</button>
+      </section>
+
+      <section class="card">
+        <h2>调仓建议</h2>
+        <p class="hint">规则：季度再平衡（任一只偏离目标达阈值调回，阈值见「配置」页策略面板）；成长分批止盈（档位见策略面板）；宽基 / 红利 / 成长按近 3 月高点回撤分档加仓；<b>高抛赚差价</b>（连涨 + 盈利 + 估值偏高 → 部分抛出轮动）；<b>短期做差价</b>（你低吸的批次在短期 3~21 天内涨达阈值，如约 +10%，即提醒卖出该批次落袋、轮动到更便宜基金）；现金目标约 25%，<b>最低可压到 10%</b> 用于低吸（见配置页）；执行节奏看「近期年化波动」（高波动→分批、低波动→正常执行），不拿单日已实现涨跌当操作开关。所有金额均为<b>目标金额</b>，实际成交用你下单那天的收盘价（未知价成交）——交易时段内可看「持仓行情」页顶部的「📡 盘中预估」缩小落差。</p>
+        <div id="adviceList" class="advice-list"></div>
+      </section>
+    </section>
+
+    <!-- ===== 第 3 页：配置 ===== -->
+    <section id="view-config" class="view">
+      <section id="sec-strategy" class="card strategy">
+        <h2>🔄 策略面板（理财财每日自动更新）</h2>
+        <p class="hint">比例 / 现金 / 阈值 / 基金列表由<b>「理财财市场自适应引擎」每日收盘后拉取真实行情自动计算</b>。你<b>无需再找我聊</b>——打开页面即是最新版。仅在想改进功能或调整底层投资逻辑时，才需要回来找我。</p>
+        <div id="strategyMeta" class="strategy-meta"></div>
+        <div class="strategy-actions">
+          <button id="applyDefaultBtn" class="btn">↩ 恢复默认（引擎基线 + 平衡偏好）</button>
+        </div>
+        <details class="strategy-import">
+          <summary>手动粘贴策略 JSON 以临时覆盖（覆盖自动版，直到点上方恢复默认）</summary>
+          <textarea id="strategyInput" placeholder='粘贴理财财提供的策略 JSON，例如 {"version":"2026-08-01-v3","cashWeight":0.25,"funds":[...]}'></textarea>
+          <button id="importStrategyBtn" class="btn btn-primary">套用此策略</button>
+        </details>
+      </section>
+
+      <section class="card">
+        <h2>设定可投金额</h2>
+        <div class="row">
+          <label>可投金额（元）</label>
+          <div class="inline">
+            <input type="number" id="amountInput" placeholder="例如 1000000" />
+            <button id="genConfigBtn" class="btn btn-primary">设定初投金额</button>
+          </div>
+          <p class="hint strong">⚠️ 请输入 <b>100% 的总可投金额</b>（你准备投入这个计划的全部本金）。<b>不要自己先扣现金</b>——工具会自动从中预留约 <b>25% 作现金机动</b>（最低可压到 10% 用于低吸，见「偏好与信号」），剩下约 75% 部署到 6 只基金。例：打算投 100 万，就填 1000000。</p>
+        </div>
+        <div class="row">
+          <label>后续追加投资（元）</label>
+          <div class="inline">
+            <input type="number" id="addAmountInput" placeholder="例如 500000" />
+            <button id="addInvestBtn" class="btn">追加</button>
+          </div>
+          <p class="hint">后期想再加钱时点这里：填<b>新增</b>的金额（不是累计）。新钱进入现金池，目标配置同步上调，你再按建议逐步部署。已登记的持仓与盈亏全程保留。</p>
+        </div>
+        <p class="hint">比例 / 现金 / 阈值 / 基金列表由<b>理财财结合当下行情动态维护</b>（见上方「策略面板」），页面加载即套用最新版。如需微调可在策略面板粘贴 JSON 或由理财财更新。</p>
+        <div id="targetTableWrap" class="table-wrap"></div>
+      </section>
+
+      <section class="card">
+        <h2>偏好与信号</h2>
+        <div class="posture-row">
+          <label>我的风险偏好（底仓姿态）：</label>
+          <select id="postureSel">
+            <option value="conservative">稳健（少波动）</option>
+            <option value="balanced">平衡（推荐）</option>
+            <option value="aggressive">进取（多弹性）</option>
+          </select>
+          <span class="hint-inline">引擎在评估结果之上叠加此偏好，不影响自动调仓节奏。</span>
+        </div>
+        <div class="nt-row">
+          <label>🇨🇳 国家队状态：</label>
+          <select id="ntSel">
+            <option value="silence">⚪ 静默（维持现状）</option>
+            <option value="buy">🟢 买入中（托底，敢加仓）</option>
+            <option value="retreat">🔴 疑似撤退（谨慎追高）</option>
+          </select>
+          <span class="hint-inline" id="ntTip"></span>
+        </div>
+        <div class="nt-row">
+          <label>💰 最低现金比例（地板）：</label>
+          <select id="minCashSel">
+            <option value="0.10">10%（激进 · 低吸空间大）</option>
+            <option value="0.15">15%（适中）</option>
+            <option value="0.20">20%（保守 · 原默认）</option>
+          </select>
+          <span class="hint-inline" id="minCashTip"></span>
+        </div>
+        <div class="nt-row">
+          <label>🔁 短期做差价触发：</label>
+          <select id="spreadSel">
+            <option value="0.10">涨 10%（约一周落袋）</option>
+            <option value="0.15">涨 15%</option>
+          </select>
+          <span class="hint-inline">低吸批次持有 3~21 天且涨幅达线，即卖出该批次赚差价</span>
+        </div>
+        <p class="hint">国家队（汇金 / 证金等）动作<b>季报滞后 1–2 月、无公开实时接口</b>，故本工具<b>不自动抓取</b>，由你据公开信息（如汇金增持公告、宽基 ETF 份额异动）手动标记。标记的<b>影响</b>：🟢 买入中 → 建仓系数上调、低吸更积极；⚪ 静默 → 维持原节奏；🔴 疑似撤退 → 建仓系数下调、现金软顶收紧、<b>暂停低吸</b>、优先高抛。本工具为长期配置框架，<b>不做清仓离场</b>建议。<br>💡 <b>最低现金比例</b>是低吸/建仓的硬地板：设为 10% 时，低吸可在 25%→10% 区间动用（额度是设 20% 时的 3 倍），更敢抄底；<b>短期做差价</b>则在你低吸后若短期涨达阈值，自动提醒卖出该批次落袋。</p>
+      </section>
+
+      <div id="dcaPlan"></div>
+    </section>
+  </main>
 
   <footer class="footer">
     <p>数据来源：东方财富公开接口（联接基金净值每日收盘后更新一次，工具以最新官方净值计算盈亏与净值涨跌；「今日预估」为对应场内 ETF 的实时涨跌近似，用于估计你<b>现在下单</b>的成交方向与时点幅度，非精确净值、仅供参考）。本工具为个人记账 / 辅助决策用，<b>不构成投资建议</b>，不承诺收益。实盘操作前请完成平台风险测评。</p>
   </footer>
+
+  <!-- 底部导航：三页切换 -->
+  <nav class="bottomnav">
+    <button data-view="holdings">📈 持仓行情</button>
+    <button data-view="advice">💡 调仓建议</button>
+    <button data-view="config">⚙️ 配置</button>
+  </nav>
+
+  <!-- 回到顶部浮动按钮：滚动超过阈值后浮现，点击平滑回顶 -->
+  <button id="toTopBtn" class="to-top" aria-label="回到顶部" title="回到顶部">↑</button>
 
   <script src="strategy.js"></script>
   <script src="app.js"></script>
