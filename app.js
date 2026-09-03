@@ -20,6 +20,7 @@ let CONFIG = { // 内置兜底默认（与 strategy.js v2 对齐；页面加载�
     { code: '007466', name: '华泰柏瑞中证红利低波ETF联接A',  weight: 0.25, cat: 'value' },
     { code: '011612', name: '华夏科创50ETF联接A',           weight: 0.12, cat: 'growth' },
     { code: '110026', name: '易方达创业板ETF联接A',         weight: 0.10, cat: 'growth' },
+    { code: '000217', name: '华安黄金ETF联接C',            weight: 0.08, cat: 'gold' },
   ],
 };
 
@@ -277,7 +278,7 @@ function renderTargets() {
   let html = '<table><thead><tr><th>基金</th><th>代码</th><th>目标比例</th><th>目标金额</th><th>类型</th></tr></thead><tbody>';
   CONFIG.funds.forEach(f => {
     const amt = deployed * f.weight;
-    const cat = f.cat === 'broad' ? '宽基' : f.cat === 'value' ? '红利低波' : '成长';
+    const cat = f.cat === 'broad' ? '宽基' : f.cat === 'value' ? '红利低波' : f.cat === 'growth' ? '成长' : '黄金';
     html += `<tr><td>${f.name}</td><td>${f.code}</td><td>${(f.weight*100).toFixed(0)}%</td><td>¥${fmt(amt)}</td><td>${cat}</td></tr>`;
   });
   html += `<tr style="font-weight:700"><td>现金机动</td><td>—</td><td>${(CONFIG.cashWeight*100).toFixed(0)}%</td><td>¥${fmt(state.amount*CONFIG.cashWeight)}</td><td>待命</td></tr>`;
@@ -285,64 +286,142 @@ function renderTargets() {
   wrap.innerHTML = html;
 }
 
-// ---------- 渲染：分批建仓计划 ----------
+// ---------- 渲染：分批建仓计划 + 记录实际持仓 ----------
 function renderDCA() {
   const wrap = $('dcaPanel');
   if (!wrap) return;
-  if (state.amount <= 0) { wrap.innerHTML = ''; return; }
+  if (!state.dca) state.dca = { batches: 3, intervalDays: 14, startDate: null, executed: [] };
   const dca = state.dca;
-  if (!dca || !dca.startDate) {
-    wrap.innerHTML = `
+  const fundOpts = CONFIG.funds.map(f => `<option value="${f.code}">${f.name} (${f.code})</option>`).join('');
+
+  // —— 分批建仓计划（仅当已设定金额且有计划日期时展示，作为路线图） ——
+  let planHtml;
+  if (state.amount > 0 && dca.startDate) {
+    const deployed = state.amount * (1 - CONFIG.cashWeight);
+    const perBatchEquity = deployed / dca.batches;
+    const cashKeep = state.amount * CONFIG.cashWeight;
+    let cards = '';
+    for (let i = 0; i < dca.batches; i++) {
+      const d = new Date(dca.startDate);
+      d.setDate(d.getDate() + i * dca.intervalDays);
+      const dateStr = d.toISOString().slice(0, 10);
+      const rows = CONFIG.funds.map(f => {
+        const amt = (deployed * f.weight) / dca.batches;
+        return `<div class="dca-fund"><span>${f.name}</span><b>¥${fmt(amt)}</b></div>`;
+      }).join('');
+      cards += `
+        <div class="dca-card">
+          <div class="dca-card-head">
+            <span class="dca-no">第 ${i + 1} 批</span>
+            <span class="dca-date">建议 ${dateStr}</span>
+          </div>
+          <div class="dca-funds">${rows}</div>
+          <div class="dca-sum">本批权益合计 <b>¥${fmt(perBatchEquity)}</b> · 实际买入后请在下方登记</div>
+        </div>`;
+    }
+    planHtml = `
+      <div class="dca-head">
+        <h3>📅 分批建仓计划（路线图参考）</h3>
+        <div class="dca-ctrl">
+          <label>分 <select id="dcaBatches">
+            <option value="2"${dca.batches === 2 ? ' selected' : ''}>2 批</option>
+            <option value="3"${dca.batches === 3 ? ' selected' : ''}>3 批</option>
+            <option value="4"${dca.batches === 4 ? ' selected' : ''}>4 批</option>
+          </select></label>
+          <label>每批间隔 <select id="dcaInterval">
+            <option value="7"${dca.intervalDays === 7 ? ' selected' : ''}>7 天</option>
+            <option value="14"${dca.intervalDays === 14 ? ' selected' : ''}>14 天</option>
+            <option value="21"${dca.intervalDays === 21 ? ' selected' : ''}>21 天</option>
+            <option value="30"${dca.intervalDays === 30 ? ' selected' : ''}>30 天</option>
+          </select></label>
+          <button id="dcaRegenBtn" class="btn">↺ 重新生成</button>
+        </div>
+        <p class="hint">权益总额 <b>¥${fmt(deployed)}</b> 分 ${dca.batches} 批（每批约 ¥${fmt(perBatchEquity)}）；<b>现金 ¥${fmt(cashKeep)}（${Math.round(CONFIG.cashWeight * 100)}%）全程保留</b>，等回撤低吸。第 1 批现在可买，后续到点再买。<b>买入后请到下方「记录实际持仓」登记</b>，工具据此反推成本基准，之后按最新净值每天自动更新市值与收益。</p>
+      </div>
+      <div class="dca-cards">${cards}</div>`;
+  } else {
+    planHtml = `
       <div class="dca-empty">
         <h3>📅 分批建仓计划</h3>
-        <p class="hint">设定可投金额后，这里会自动生成「分 3 批买入、每批间隔 14 天、现金全程保留等回撤」的建仓计划。当前沪深300估值处历史约 87% 分位，不算便宜，分批更稳、更防贵位挨套。</p>
+        <p class="hint">在「① 配置」设定可投金额后，这里会自动生成分批建仓路线图（分 3 批、每批间隔 14 天、现金全程保留等回撤）。无论是否用计划，都能直接在下方「记录实际持仓」登记你已买的基金。</p>
       </div>`;
-    return;
   }
-  const deployed = state.amount * (1 - CONFIG.cashWeight);
-  const perBatchEquity = deployed / dca.batches;
-  const cashKeep = state.amount * CONFIG.cashWeight;
-  let cards = '';
-  for (let i = 0; i < dca.batches; i++) {
-    const d = new Date(dca.startDate);
-    d.setDate(d.getDate() + i * dca.intervalDays);
-    const dateStr = d.toISOString().slice(0, 10);
-    const done = dca.executed.indexOf(i) >= 0;
-    const rows = CONFIG.funds.map(f => {
-      const amt = (deployed * f.weight) / dca.batches;
-      return `<div class="dca-fund"><span>${f.name}</span><b>¥${fmt(amt)}</b></div>`;
+
+  // —— 记录实际持仓（核心：选基金 + 持有金额 + 持有收益） ——
+  const recorded = CONFIG.funds.filter(f => {
+    const p = state.positions[f.code];
+    return p && p.shares > 0;
+  });
+  let listHtml = '<p class="hint">还没有登记持仓。选一只基金，填你<b>当下账户里的真实持有金额与累计收益</b>即可。</p>';
+  if (recorded.length) {
+    listHtml = recorded.map(f => {
+      const p = state.positions[f.code];
+      const s = fundStats(f.code);
+      const pnlCls = s.pnl > 0 ? 'up' : s.pnl < 0 ? 'down' : 'flat';
+      const recProfit = p.recordedProfit || 0;
+      const recProfitTxt = (recProfit >= 0 ? '盈 ' : '亏 −') + '¥' + fmt(Math.abs(recProfit));
+      return `
+        <div class="hold-row">
+          <span class="hold-name">${f.name}</span>
+          <span class="hold-meta">录入 ¥${fmt(p.recordedAmount || 0)}<br><span class="hold-sub">${recProfitTxt} · ${p.recordedAt || '—'}</span></span>
+          <span class="hold-now">现市值<br><b>¥${fmt(s.value)}</b></span>
+          <span class="hold-pnl ${pnlCls}">${s.pnl >= 0 ? '+' : '−'}¥${fmt(Math.abs(s.pnl))}<br><span class="hold-sub">${fmtPct(s.pnlPct)}</span></span>
+          <button class="hold-remove" data-code="${f.code}">删除</button>
+        </div>`;
     }).join('');
-    cards += `
-      <div class="dca-card ${done ? 'done' : ''}">
-        <div class="dca-card-head">
-          <span class="dca-no">第 ${i + 1} 批</span>
-          <span class="dca-date">建议 ${dateStr}</span>
-          ${done ? '<span class="dca-tag">✓ 已建仓</span>' : `<button class="a-done dca-mark" data-batch="${i}">✓ 标记已建仓</button>`}
-        </div>
-        <div class="dca-funds">${rows}</div>
-        <div class="dca-sum">本批权益合计 <b>¥${fmt(perBatchEquity)}</b></div>
-      </div>`;
   }
+
   wrap.innerHTML = `
-    <div class="dca-head">
-      <h3>📅 分批建仓计划</h3>
-      <div class="dca-ctrl">
-        <label>分 <select id="dcaBatches">
-          <option value="2"${dca.batches === 2 ? ' selected' : ''}>2 批</option>
-          <option value="3"${dca.batches === 3 ? ' selected' : ''}>3 批</option>
-          <option value="4"${dca.batches === 4 ? ' selected' : ''}>4 批</option>
-        </select></label>
-        <label>每批间隔 <select id="dcaInterval">
-          <option value="7"${dca.intervalDays === 7 ? ' selected' : ''}>7 天</option>
-          <option value="14"${dca.intervalDays === 14 ? ' selected' : ''}>14 天</option>
-          <option value="21"${dca.intervalDays === 21 ? ' selected' : ''}>21 天</option>
-          <option value="30"${dca.intervalDays === 30 ? ' selected' : ''}>30 天</option>
-        </select></label>
-        <button id="dcaRegenBtn" class="btn">↺ 重新生成</button>
+    ${planHtml}
+    <div class="dca-record">
+      <h3>📝 记录实际持仓</h3>
+      <p class="hint">滞后录入也没关系：填<b>当下该基金账户的真实持有金额 + 累计收益</b>（赚填正数、亏填负数加 −）。工具按当天净值反推份额与成本基准，之后<b>每天自动按最新净值更新市值和收益</b>。每支基金记一条（再次保存即覆盖更新）。</p>
+      <div class="hold-form">
+        <select id="holdFund">${fundOpts}</select>
+        <input type="number" id="holdAmount" placeholder="持有金额(元)" />
+        <input type="number" id="holdProfit" placeholder="持有收益(正/负)" />
+        <input type="number" id="holdNav" placeholder="净值(留空用最新)" step="0.0001" />
+        <button id="holdSaveBtn" class="btn btn-primary">保存</button>
       </div>
-      <p class="hint">权益总额 <b>¥${fmt(deployed)}</b> 分 ${dca.batches} 批（每批约 ¥${fmt(perBatchEquity)}）；<b>现金 ¥${fmt(cashKeep)}（${Math.round(CONFIG.cashWeight * 100)}%）全程保留</b>，等回撤低吸（见③调仓建议）。第 1 批现在可买，后续到点再买；若市场先大跌，直接用现金低吸。每批点「标记已建仓」后变灰。</p>
-    </div>
-    <div class="dca-cards">${cards}</div>`;
+      <div class="hold-list">${listHtml}</div>
+    </div>`;
+}
+
+// ---------- 记录实际持仓（简化登记：持有金额 + 持有收益） ----------
+function recordHolding() {
+  const code = $('holdFund').value;
+  const amount = parseFloat($('holdAmount').value);
+  const profit = parseFloat($('holdProfit').value);
+  if (!amount || amount <= 0) { alert('请输入有效持有金额'); return; }
+  if (isNaN(profit)) { alert('请输入持有收益：正数 = 盈利，负数 = 亏损（记得加 − 号），无收益填 0。'); return; }
+  let nav = currentNav(code);
+  const navInput = parseFloat($('holdNav').value);
+  if ((nav == null || isNaN(nav)) && !isNaN(navInput) && navInput > 0) nav = navInput;
+  if (nav == null || isNaN(nav) || nav <= 0) {
+    alert('尚未拉取该基金净值，请先点「🔄 刷新行情」，或在「净值」框手动填写后保存。'); return;
+  }
+  const shares = amount / nav;          // 反推份额：录入日净值 × 份额 = 持有金额
+  const cost = amount - profit;         // 反推成本基准：持有金额 − 累计收益 = 投入本金
+  state.positions[code] = Object.assign(state.positions[code] || {}, {
+    shares, cost,
+    recordedAt: new Date().toISOString().slice(0, 10),
+    navAtRecord: nav,
+    recordedAmount: amount,
+    recordedProfit: profit,
+  });
+  saveState();
+  $('holdAmount').value = '';
+  $('holdProfit').value = '';
+  $('holdNav').value = '';
+  renderAll();
+}
+
+function removeHolding(code) {
+  const name = fundByCode(code) ? fundByCode(code).name : code;
+  if (!confirm('删除「' + name + '」的持仓记录？\n（仅删除本工具的记账登记，不影响你在平台里的实际持仓）')) return;
+  delete state.positions[code];
+  saveState();
+  renderAll();
 }
 
 // ---------- 渲染：持仓 / 行情 ----------
@@ -490,7 +569,7 @@ function buildAdvice() {
 
     // 3) 回撤分档加仓（需近3月高点；已执行则消失；价格回升突破该档自动重置）
     const high = state.navCache[f.code] && state.navCache[f.code].high;
-    if (high && s.nav) {
+    if (high && s.nav && f.cat !== 'gold') {  // 黄金为避险资产，不做回撤分档加仓，仅靠偏离再平衡
       const dd = (s.nav - high) / high; // 负值=回撤
       const steps = f.cat === 'growth' ? CONFIG.growthDrawdown : CONFIG.wideDrawdown;
       const fd = state.filled.dd[f.code] = state.filled.dd[f.code] || steps.map(() => false);
@@ -790,21 +869,19 @@ function init() {
     });
   }
 
-  // 分批建仓计划交互（事件委托到容器，innerHTML 重建后仍有效）
+  // 分批建仓 / 记录实际持仓 交互（事件委托到容器，innerHTML 重建后仍有效）
   const dcaWrap = $('dcaPanel');
   if (dcaWrap) {
     dcaWrap.addEventListener('click', (e) => {
       if (e.target.closest('#dcaRegenBtn')) {
+        if (!state.dca) state.dca = { batches: 3, intervalDays: 14, startDate: null, executed: [] };
         state.dca.startDate = new Date().toISOString().slice(0, 10);
         state.dca.executed = [];
         saveState(); renderAll(); return;
       }
-      const mk = e.target.closest('.dca-mark');
-      if (mk) {
-        const i = +mk.dataset.batch;
-        if (state.dca.executed.indexOf(i) < 0) state.dca.executed.push(i);
-        saveState(); renderAll(); return;
-      }
+      if (e.target.closest('#holdSaveBtn')) { recordHolding(); return; }
+      const rm = e.target.closest('.hold-remove');
+      if (rm) { removeHolding(rm.dataset.code); return; }
     });
     dcaWrap.addEventListener('change', (e) => {
       if (e.target.id === 'dcaBatches') { state.dca.batches = +e.target.value; saveState(); renderAll(); }

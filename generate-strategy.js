@@ -13,11 +13,13 @@ const FUNDS = [
   { code: '007466', name: '华泰柏瑞中证红利低波ETF联接A', cat: 'value'  },
   { code: '011612', name: '华夏科创50ETF联接A',       cat: 'growth' },
   { code: '110026', name: '易方达创业板ETF联接A',     cat: 'growth' },
+  { code: '000217', name: '华安黄金ETF联接C',         cat: 'gold'   },
 ];
 
-const BASE_WEIGHT = {        // 平衡姿态基线（合计 1.0）
+const BASE_WEIGHT = {        // 平衡姿态基线（权益部分，合计 1.0，黄金单独固定）
   '110020': 0.20, '022434': 0.18, '007466': 0.27, '011612': 0.18, '110026': 0.17,
 };
+const GOLD_EQ = 0.0875;      // 黄金占权益池目标（≈总盘 7% @ 现金 20%），避险资产固定不参与轮动
 const TRADING_DAYS = 242;
 
 // ---------- 数据获取 ----------
@@ -78,12 +80,14 @@ function metrics(series) {
 
 // ---------- 策略引擎 ----------
 function engine(M) {
+  const equityFunds = FUNDS.filter(f => f.cat !== 'gold');
   const byCode = {};
   FUNDS.forEach(f => byCode[f.code] = M[f.code]);
 
-  const w = { ...BASE_WEIGHT };
+  const w = {};
+  equityFunds.forEach(f => w[f.code] = BASE_WEIGHT[f.code]);
 
-  // 1) 成长 vs 价值 相对强度（60日）
+  // 1) 成长 vs 价值 相对强度（60日，仅权益）
   const growthMom = (byCode['011612'].mom60 + byCode['110026'].mom60) / 2;
   const valueMom  = byCode['007466'].mom60;
   const rot = growthMom - valueMom;   // >0 成长占优，<0 价值占优
@@ -98,26 +102,31 @@ function engine(M) {
     w['011612'] -= a * 0.40; w['110026'] -= a * 0.40;
   }
 
-  // 2) 估值分位微调（便宜加点、贵减点）
-  FUNDS.forEach(f => {
+  // 2) 估值分位微调（便宜加点、贵减点，仅权益）
+  equityFunds.forEach(f => {
     const p = byCode[f.code].valPct;
     if (p < 0.25) w[f.code] += 0.02;
     else if (p > 0.80) w[f.code] -= 0.02;
   });
 
-  // 3) 地板 + 成长上限，归一化
-  FUNDS.forEach(f => { if (w[f.code] < 0.08) w[f.code] = 0.08; });
+  // 3) 地板 + 成长上限，归一化（仅权益）
+  equityFunds.forEach(f => { if (w[f.code] < 0.08) w[f.code] = 0.08; });
   let growthSum = w['011612'] + w['110026'];
   if (growthSum > 0.50) {
     const scale = 0.50 / growthSum;
     w['011612'] *= scale; w['110026'] *= scale;
   }
-  const sum = FUNDS.reduce((a, f) => a + w[f.code], 0);
-  FUNDS.forEach(f => w[f.code] = w[f.code] / sum);
+  const sum = equityFunds.reduce((a, f) => a + w[f.code], 0);
+  equityFunds.forEach(f => w[f.code] = w[f.code] / sum);
+
+  // 3.5) 纳入黄金（避险资产，固定占权益池 GOLD_EQ，不参与轮动/微调）
+  const scaleE = 1 - GOLD_EQ;
+  equityFunds.forEach(f => w[f.code] *= scaleE);
+  w['000217'] = GOLD_EQ;
 
   // 4) 现金比例（随市场，10%~30%）
-  const volAll = FUNDS.reduce((a, f) => a + byCode[f.code].vol, 0) / FUNDS.length;
-  const ddAll  = FUNDS.reduce((a, f) => a + byCode[f.code].dd, 0) / FUNDS.length;
+  const volAll = equityFunds.reduce((a, f) => a + byCode[f.code].vol, 0) / equityFunds.length;
+  const ddAll  = equityFunds.reduce((a, f) => a + byCode[f.code].dd, 0) / equityFunds.length;
   let cash = 0.15;
   if (volAll > 0.25) cash += 0.10;
   else if (volAll > 0.20) cash += 0.05;
@@ -137,6 +146,7 @@ function engine(M) {
   notes.push(`全市场年化波动 ${(volAll * 100).toFixed(1)}% → 现金目标 ${(cash * 100).toFixed(0)}%`);
   notes.push(`成长/价值60日相对强度 ${((rot) * 100).toFixed(1)}% → ${rot > 0.04 ? '略偏成长' : rot < -0.04 ? '略偏价值' : '均衡'}`);
   notes.push(`组合120日回撤 ${(ddAll * 100).toFixed(1)}% → ${ddAll < -0.20 ? '低位可逐步部署' : '常态'}`);
+  notes.push('已纳入黄金(000217)避险资产，固定占权益池约 8.75%（总盘约 7%），仅做偏离再平衡');
 
   return {
     version: 'auto-' + new Date().toISOString().slice(0, 10),

@@ -219,6 +219,33 @@ tfoot .foot.total td { background: #fff0e8; }
 .dca-fund span { color: var(--muted); }
 .dca-sum { margin-top: 8px; font-size: 13px; font-weight: 700; }
 
+/* 记录实际持仓 */
+.dca-record { margin-top: 18px; border-top: 1px dashed var(--line); padding-top: 14px; }
+.dca-record h3 { margin: 0 0 8px; font-size: 14.5px; }
+.hold-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.hold-form #holdFund { min-width: 210px; }
+.hold-form input { flex: 1; min-width: 120px; }
+.hold-list { display: flex; flex-direction: column; gap: 8px; }
+.hold-row {
+  display: grid; grid-template-columns: 1.3fr 1.7fr 1fr 1fr auto; gap: 10px; align-items: center;
+  background: #fffaf6; border: 1px solid var(--line); border-radius: 14px; padding: 10px 13px; font-size: 12.5px;
+}
+.hold-name { font-weight: 800; font-size: 13px; }
+.hold-meta { color: var(--muted); line-height: 1.5; }
+.hold-now { font-weight: 700; line-height: 1.5; }
+.hold-pnl { font-weight: 800; line-height: 1.5; }
+.hold-sub { font-size: 11px; font-weight: 600; color: var(--muted); }
+.hold-remove {
+  border: 1.5px solid #ffd0d6; background: #fff; color: var(--up); border-radius: 999px;
+  padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer; transition: .18s;
+}
+.hold-remove:hover { background: #fff1f3; }
+.hold-remove:active { transform: scale(.96); }
+@media (max-width: 720px) {
+  .hold-row { grid-template-columns: 1fr 1fr; }
+  .hold-remove { grid-column: 1 / -1; }
+}
+
 @media (max-width: 720px) {
   .summary-grid { grid-template-columns: repeat(3, 1fr); }
   .cash-grid { grid-template-columns: repeat(2, 1fr); }
