@@ -583,12 +583,8 @@ function buildAdvice() {
   const cashRatio = t.cash / asset;
   const deployed = state.amount * (1 - CONFIG.cashWeight);
 
-  // 单日波动检测
-  let maxDaily = 0;
-  CONFIG.funds.forEach(f => {
-    const c = state.navCache[f.code];
-    if (c && c.dailyChange != null) maxDaily = Math.max(maxDaily, Math.abs(c.dailyChange));
-  });
+  // 注：不再用「单日已实现涨跌」当操作门禁。场外基金按下一交易日收盘净值（未知价）成交，
+  // 当日收盘涨跌属于历史值，用它约束未来操作存在时间错位。改用近期年化波动判断执行节奏（见末尾「波动纪律」）。
 
   CONFIG.funds.forEach(f => {
     const s = fundStats(f.code);
@@ -688,8 +684,22 @@ function buildAdvice() {
 
   if (list.length === 0) {
     list.push({ type: 'info', title: '暂无调仓信号', body: '各基金权重在阈值内，且未见止盈/低吸触发。保持持有，下个季度末再审视。', reason: '' });
-  } else if (maxDaily <= 0.03) {
-    list.unshift({ type: 'info', title: '今日波动 ≤3%', body: '按规则今日不主动操作，已生成的信号留作观察，等波动放大或触发线再执行。', reason: '单日波动纪律' });
+  }
+
+  // 波动纪律：用「近期年化波动」决定执行节奏（对未来成交日更有参考性），不做一刀切的操作开关
+  const volAll = (CONFIG.indicators && CONFIG.indicators.volAll) || 0.20;
+  if (volAll > 0.28) {
+    list.unshift({
+      type: 'info', title: `市场高波动 · 建议分批（年化 ${(volAll * 100).toFixed(0)}%）`,
+      body: '近期波动明显高于常态，一次性成交容易买在短期高点。建议把本次操作拆成 2–3 笔、间隔 3–5 个交易日执行。',
+      reason: '波动纪律：基于近期年化波动',
+    });
+  } else if (volAll < 0.15) {
+    list.unshift({
+      type: 'info', title: `市场平稳 · 可正常执行（年化 ${(volAll * 100).toFixed(0)}%）`,
+      body: '近期波动处于低位，信号按常规执行即可，无需刻意拆分。',
+      reason: '波动纪律：基于近期年化波动',
+    });
   }
 
   return list;
@@ -698,7 +708,21 @@ function buildAdvice() {
 function renderAdvice() {
   const list = buildAdvice();
   const wrap = $('adviceList');
-  wrap.innerHTML = list.map(a => `
+  // 执行落差提示：场外基金按下一交易日收盘净值（未知价）成交，必须明确告知价格基准日
+  let navDate = '';
+  CONFIG.funds.forEach(f => {
+    const c = state.navCache[f.code];
+    if (c && c.date && c.date > navDate) navDate = c.date;
+  });
+  const parts = navDate ? navDate.split('-') : null;
+  const baseTxt = parts ? `${+parts[1]} 月 ${+parts[2]} 日` : '最近收盘';
+  const banner = `
+    <div class="advice info exec-note">
+      <div class="a-head"><span class="tag info">执行提示</span>信号基于 <b>${baseTxt}</b> 收盘净值 · 按<b>下一交易日 15:00 前</b>的申赎、以<b>当日收盘净值</b>成交</div>
+      <div class="a-body">场外基金是「未知价成交」：你现在看到的所有价格都是<b>已收盘的历史净值</b>，真正成交用的是你下单那天的收盘价（下单时不可知）。因此下方金额是<b>目标金额</b>，实际成交份额会随当日涨跌浮动——这正是「高波动时分批」的意义。</div>
+      <div class="a-reason">依据：开放式基金申赎规则（T 日 15:00 前按 T 日净值，之后按 T+1 日净值）</div>
+    </div>`;
+  wrap.innerHTML = banner + list.map(a => `
     <div class="advice ${a.type}">
       <div class="a-head"><span class="tag ${a.type}">${a.type === 'buy' ? '买入' : a.type === 'sell' ? '卖出' : '提示'}</span>${a.title}
         ${a.key ? `<button class="a-done" data-key="${a.key}">✓ 我已执行</button>` : ''}

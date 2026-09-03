@@ -225,6 +225,9 @@ tfoot .foot.total td { background: #fff0e8; }
 .dca-fund span { color: var(--muted); }
 .dca-sum { margin-top: 8px; font-size: 13px; font-weight: 700; }
 
+.advice.exec-note { background: #fdf6e9; }
+.advice.exec-note .a-head { color: var(--amber); }
+
 /* 智能建仓建议 */
 .dca-progress { height: 10px; border-radius: 999px; background: #f0e5dd; overflow: hidden; margin: 6px 0 10px; }
 .dca-progress-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #ffc9a8, var(--primary)); transition: width .5s ease; }
