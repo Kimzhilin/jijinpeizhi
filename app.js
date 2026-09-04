@@ -335,6 +335,16 @@ function isBeforeClose() {
   return n.getHours() < 15;
 }
 
+// 日期加 N 天（ISO yyyy-mm-dd）。用于「15:00 后下单按 T+1 净值结算」时把成交日顺延一天。
+// 注意：必须用 UTC 构造与读取，避免本地时区(如 GMT+8)把 "T00:00:00" 当本地时间、
+//       再 toISOString 转 UTC 时回退一天，导致日期算错。
+function addDays(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+
 // 极简 JSONP（东方财富 push2 行情接口支持 cb 回调）
 let _jpSeq = 0;
 function jsonp(url) {
@@ -772,6 +782,14 @@ function recordTrade() {
   const amount = parseFloat($('tradeAmount').value);
   let nav = parseFloat($('tradeNav').value);
   const date = $('tradeDate').value || new Date().toISOString().slice(0, 10);
+  // 成交时段：t=15:00前按当日(T)净值；t1=15:00后按次日(T+1)净值结算
+  const session = $('tradeSession') ? $('tradeSession').value : 't';
+  const effDate = session === 't1' ? addDays(date, 1) : date;
+  if (session === 't1' && (nav == null || isNaN(nav) || nav <= 0)) {
+    // 次日净值通常尚未公布，强制要求手工填写 T+1 净值，避免误用当日净值当成交价
+    alert('「15:00后」下单按次日(T+1)净值成交，请手动填写次日公布的净值（不要留空）。');
+    return;
+  }
 
   if (!amount || amount <= 0) { alert('请输入有效金额'); return; }
   if (nav == null || isNaN(nav) || nav <= 0) {
@@ -788,7 +806,7 @@ function recordTrade() {
     state.positions[code] = { shares: pos.shares + shares, cost: pos.cost + amount };
     // 登记为一个「买入批次」，供短期做差价追踪（涨达阈值即建议卖出该批次赚差价）
     state.lots = state.lots || [];
-    state.lots.push({ id: 'L' + Date.now() + '_' + Math.random().toString(36).slice(2, 5), code, amount, nav, shares, date, closed: false });
+    state.lots.push({ id: 'L' + Date.now() + '_' + Math.random().toString(36).slice(2, 5), code, amount, nav, shares, date: effDate, session, closed: false });
   } else { // sell — 按份额卖出
     if (pos.shares <= 0) { alert('该基金无持仓'); return; }
     const sharesSold = amount; // 卖出时 amount 代表"份额"
@@ -813,7 +831,7 @@ function recordTrade() {
   // tx 记录：买入 amount=投入金额、shares=购入份额；卖出 amount=回笼金额(份额×净值)、shares=卖出份额
   const txAmount = type === 'sell' ? sharesSold * nav : amount;
   const txShares = type === 'sell' ? sharesSold : (amount / nav);
-  state.tx.push({ id: Date.now() + '_' + Math.random().toString(36).slice(2, 7), code, type, date, amount: txAmount, nav, shares: txShares });
+  state.tx.push({ id: Date.now() + '_' + Math.random().toString(36).slice(2, 7), code, type, date: effDate, session, amount: txAmount, nav, shares: txShares });
 
   // 标记已执行：买入 → 当前触发的低吸档；卖出 → 当前触发的止盈档（避免建议反复出现）
   const f = fundByCode(code);
