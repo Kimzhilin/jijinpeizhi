@@ -118,8 +118,13 @@
             <input type="number" id="tradeAmount" placeholder="买入填金额(元) / 卖出填份额" />
             <input type="number" id="tradeNav" placeholder="净值(留空用估算)" step="0.0001" />
             <input type="date" id="tradeDate" />
+            <select id="tradeSession" title="成交时段决定按哪天净值结算">
+              <option value="t">15:00前·按当日(T)净值</option>
+              <option value="t1">15:00后·按次日(T+1)净值</option>
+            </select>
             <button id="tradeSubmit" class="btn btn-primary">登记</button>
           </div>
+          <p class="hint" id="tradeSessionHint">场外联接基金规则：<b>15:00 前</b>下单按<b>当日(T)净值</b>成交；<b>15:00 后</b>下单顺延到<b>次日(T+1)净值</b>成交。选「15:00后」时，下方「净值」请填<b>次日</b>公布的净值，「日期」填你下单那天，系统会自动按次日结算并记录持有天数。</p>
         </div>
 
         <div id="lotsWrap" class="lots-wrap"></div>
